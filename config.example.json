@@ -1,0 +1,6 @@
+{
+  "myGitHubLogin": "your-github-username",
+  "teammates": ["teammate1", "teammate2"],
+  "repo": "Gusto/hawaiian-ice",
+  "refreshIntervalMs": 120000
+}

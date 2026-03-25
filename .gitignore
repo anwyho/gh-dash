@@ -1,0 +1,15 @@
+# Next.js
+.next/
+out/
+node_modules/
+.env*.local
+
+# Personal config — teammates list lives here, not committed
+config.json
+
+# macOS
+.DS_Store
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts

@@ -1,0 +1,74 @@
+@import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap");
+
+:root {
+  --bg: #0f0e0d;
+  --bg-card: #1a1917;
+  --bg-card-hover: #201f1d;
+  --border: #2e2b28;
+  --border-hover: #4a4540;
+  --text-primary: #e8e2d9;
+  --text-muted: #7a7670;
+  --text-faint: #3d3a37;
+  --accent: #f0a500;
+  --accent-dim: #9e6d00;
+  --blue: #4a9eff;
+  --state-draft: #6b6560;
+  --state-open: #3fb950;
+  --state-merged: #a371f7;
+  --state-closed: #f85149;
+  --ci-success: #3fb950;
+  --ci-failure: #f85149;
+  --ci-pending: #f0a500;
+  --ci-unknown: #4b4845;
+  --review-approved: #3fb950;
+  --review-changes: #f85149;
+  --review-pending: #f0a500;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: "JetBrains Mono", "Courier New", monospace;
+  background-color: var(--bg);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* Subtle scanline texture */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-hover);
+}
