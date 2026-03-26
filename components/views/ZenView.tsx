@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { formatDistanceToNow } from "date-fns";
-import type { PrCardData } from "@/types/pr";
+import type { PrCardData, PrDetails } from "@/types/pr";
 import NavBar from "@/components/NavBar";
 import { useDashboardData } from "@/lib/hooks/useDashboardData";
 
@@ -53,7 +53,7 @@ interface Props { refreshIntervalMs: number; myLogin: string; repo: string; }
 export default function ZenView({ refreshIntervalMs, myLogin, repo }: Props) {
   const [hoveredPr, setHoveredPr] = useState<PrCardData | null>(null);
   const [paused, setPaused] = useState(false);
-  const { myPrs, tmPrs, rvPrs, isLoading, refresh } = useDashboardData(refreshIntervalMs);
+  const { myPrs, tmPrs, rvPrs, detailsMap, isLoading, refresh } = useDashboardData(refreshIntervalMs);
 
   const review = rvPrs?.reviewRequests ?? [];
   const myActive = myPrs?.active ?? [];
@@ -243,6 +243,15 @@ export default function ZenView({ refreshIntervalMs, myLogin, repo }: Props) {
                 ))}
               </div>
             )}
+            {(() => {
+              const d: PrDetails | undefined = detailsMap?.[hoveredPr.number];
+              const body = d?.body?.replace(/<!--[\s\S]*?-->/g, "").trim();
+              return body ? (
+                <p style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5, marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  {body.slice(0, 400)}{body.length > 400 ? "…" : ""}
+                </p>
+              ) : null;
+            })()}
             <p style={{ fontSize: 10, color: "var(--accent)", marginTop: 10 }}>Click dot to open PR →</p>
           </div>
         )}

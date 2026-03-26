@@ -32,6 +32,7 @@ export interface ReviewRequestsResponse {
 export interface PrDetails {
   reviewState: ReviewState;
   ciState: CiState;
+  body: string | null;
 }
 
 export interface MyPrsResponse {

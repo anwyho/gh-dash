@@ -66,6 +66,11 @@ function PrChip({ pr, showUrgency, details }: PrChipProps) {
     ? `, review ${details.reviewState.replace("_", " ")}, CI ${details.ciState}`
     : "";
 
+  // Trim body to ~280 chars for tooltip
+  const bodyPreview = details?.body
+    ? details.body.replace(/<!--[\s\S]*?-->/g, "").trim().slice(0, 280) + (details.body.length > 280 ? "…" : "")
+    : null;
+
   return (
     <a
       href={pr.htmlUrl}
@@ -83,6 +88,8 @@ function PrChip({ pr, showUrgency, details }: PrChipProps) {
         <span className="pr-chip-title">{pr.title}</span>
         <div className="pr-chip-meta">
           <span className="pr-chip-author">{pr.author.login}</span>
+          <span aria-hidden="true" className="pr-chip-sep">·</span>
+          <span className="pr-chip-reltime">{rel}</span>
           {details && (
             <>
               <span aria-hidden="true" className="pr-chip-sep">·</span>
@@ -96,6 +103,9 @@ function PrChip({ pr, showUrgency, details }: PrChipProps) {
             </>
           )}
         </div>
+        {bodyPreview && (
+          <p className="pr-chip-desc">{bodyPreview}</p>
+        )}
       </div>
     </a>
   );
@@ -237,18 +247,21 @@ export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props
 
         .chip-skeleton { min-width:200px; height:68px; border-radius:7px; background:var(--bg-card); border:1px solid var(--border); flex-shrink:0; animation:pulse 1.5s ease infinite; }
 
-        .pr-chip { display:flex; gap:9px; padding:9px 11px; background:var(--bg-card); border:1px solid var(--border); border-radius:7px; min-width:200px; max-width:260px; flex-shrink:0; text-decoration:none; cursor:pointer; transition:background .1s,border-color .1s; }
+        .pr-chip { display:flex; gap:9px; padding:9px 11px; background:var(--bg-card); border:1px solid var(--border); border-radius:7px; width:280px; flex-shrink:0; text-decoration:none; cursor:pointer; transition:background .1s,border-color .1s; }
         .pr-chip:hover { background:var(--bg-card-hover); border-color:var(--border-strong); }
         .pr-chip-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; margin-top:3px; }
         .pr-chip-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
         .pr-chip-header { display:flex; align-items:baseline; justify-content:space-between; gap:6px; }
         .pr-chip-number { font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; color:var(--text-muted); }
         .pr-chip-age { font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; flex-shrink:0; }
-        .pr-chip-title { font-size:12px; font-weight:500; color:var(--text-primary); line-height:1.35; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
-        .pr-chip-meta { display:flex; align-items:center; gap:7px; margin-top:1px; }
+        .pr-chip-title { font-size:12px; font-weight:500; color:var(--text-primary); line-height:1.4; word-break:break-word; }
+        .pr-chip-meta { display:flex; align-items:center; flex-wrap:wrap; gap:5px; margin-top:2px; }
         .pr-chip-author { font-size:11px; color:var(--text-secondary); }
+        .pr-chip-reltime { font-size:10px; color:var(--text-muted); }
         .pr-chip-sep { font-size:10px; color:var(--text-muted); }
         .pr-chip-status { font-size:10px; font-weight:600; letter-spacing:.02em; }
+        .pr-chip-desc { font-size:11px; color:var(--text-secondary); line-height:1.5; margin-top:6px; padding-top:6px; border-top:1px solid var(--border); white-space:pre-wrap; word-break:break-word; display:none; }
+        .pr-chip:hover .pr-chip-desc { display:block; }
       `}</style>
     </div>
   );

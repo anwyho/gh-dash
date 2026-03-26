@@ -17,16 +17,17 @@ async function fetchOnePr(repo: string, prNumber: number): Promise<PrDetails> {
       ghFetch(`repos/${repo}/pulls/${prNumber}/reviews`),
     ]);
 
-    const sha = (prData as { head: { sha: string } }).head.sha;
-    if (!/^[0-9a-f]{40}$/i.test(sha)) throw new Error("Invalid SHA");
+    const pr = prData as { head: { sha: string }; body: string | null };
+    if (!/^[0-9a-f]{40}$/i.test(pr.head.sha)) throw new Error("Invalid SHA");
 
     const checkRunsData = await ghFetch(
-      `repos/${repo}/commits/${sha}/check-runs?per_page=50`
+      `repos/${repo}/commits/${pr.head.sha}/check-runs?per_page=50`
     );
 
     return {
       reviewState: computeReviewState(reviewsData as Parameters<typeof computeReviewState>[0]),
       ciState: computeCiState(checkRunsData as Parameters<typeof computeCiState>[0]),
+      body: pr.body ?? null,
     };
   });
 }

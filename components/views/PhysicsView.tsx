@@ -344,6 +344,11 @@ export default function PhysicsView({ refreshIntervalMs, repo }: Props) {
                   {hovered.pr.labels.map(l => <span key={l.id} style={{ background: `#${l.color}`, borderRadius: 3, padding: "1px 5px", fontSize: 10, fontWeight: 600, color: "#000" }}>{l.name}</span>)}
                 </div>
               )}
+              {d?.body && (
+                <p style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5, marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  {d.body.replace(/<!--[\s\S]*?-->/g, "").trim().slice(0, 400)}{d.body.length > 400 ? "…" : ""}
+                </p>
+              )}
               <p style={{ fontSize: 10, color: "var(--accent)", marginTop: 8 }}>Click to open →</p>
             </div>
           );
