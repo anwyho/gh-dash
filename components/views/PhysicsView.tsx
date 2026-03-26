@@ -1,20 +1,25 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import useSWR from "swr";
 import { differenceInDays, formatDistanceToNow } from "date-fns";
-import type { PrCardData, MyPrsResponse, TeammatePrsResponse, ReviewRequestsResponse } from "@/types/pr";
+import type { PrCardData, PrDetails, MyPrsResponse, TeammatePrsResponse, ReviewRequestsResponse } from "@/types/pr";
 import NavBar from "@/components/NavBar";
 import { fetcher } from "@/lib/fetcher";
 
-// Stripe-aligned palette
+// ── Constants ─────────────────────────────────────────────────────────────────
+
 const STATE_COLORS: Record<string, string> = {
-  draft: "#52525b",
-  open: "#22c55e",
-  merged: "#a855f7",
-  closed: "#ef4444",
+  draft: "#52525b", open: "#22c55e", merged: "#a855f7", closed: "#ef4444",
 };
-const REVIEW_COLOR = "#6366f1"; // indigo ring for review-requested
+const BUCKET_COLORS = ["#6366f1", "#22c55e", "#64748b"] as const;
+const BUCKET_LABELS = ["Review Queue", "My PRs", "Team"] as const;
+const GRAVITY = 0.25;
+const DAMPING = 0.97;
+const FLOOR_BOUNCE = 0.45;
+const WALL_BOUNCE = 0.5;
+
+// ── Ball type ─────────────────────────────────────────────────────────────────
 
 interface Ball {
   id: number;
@@ -22,135 +27,184 @@ interface Ball {
   vx: number; vy: number;
   radius: number;
   color: string;
+  bucket: 0 | 1 | 2; // which column
   pr: PrCardData;
-  label: "review-req" | "mine" | "teammate";
 }
 
-function makeBalls(prs: PrCardData[], label: Ball["label"], w: number, h: number): Ball[] {
-  return prs.map((pr, i) => {
+function makeBalls(prs: PrCardData[], bucket: Ball["bucket"], w: number): Ball[] {
+  const colW = w / 3;
+  const left = bucket * colW;
+  return prs.map((pr) => {
     const age = Math.max(0, differenceInDays(new Date(), new Date(pr.createdAt)));
-    const radius = Math.round(Math.max(26, Math.min(62, 26 + age * 1.4)));
-    const angle = (i / Math.max(prs.length, 1)) * Math.PI * 2;
-    const spread = Math.min(w, h) * 0.28;
+    const radius = Math.max(20, Math.min(50, 20 + age * 1.2));
     return {
       id: pr.number,
-      x: w / 2 + Math.cos(angle) * spread * (0.5 + Math.random() * 0.5),
-      y: h / 2 + Math.sin(angle) * spread * (0.5 + Math.random() * 0.5),
-      vx: (Math.random() - 0.5) * 1.5,
-      vy: (Math.random() - 0.5) * 1.5,
+      // spawn at top of the column, random x within it
+      x: left + radius + Math.random() * (colW - radius * 2),
+      y: 60 + Math.random() * 40,
+      vx: (Math.random() - 0.5) * 2,
+      vy: Math.random() * 2,
       radius,
-      color: STATE_COLORS[pr.state] ?? "#52525b",
-      pr, label,
+      color: bucket === 0 ? "#6366f1" : STATE_COLORS[pr.state] ?? "#52525b",
+      bucket,
+      pr,
     };
   });
 }
 
 function tick(balls: Ball[], w: number, h: number, mx: number, my: number) {
-  const cx = w / 2, cy = h / 2;
+  const colW = w / 3;
+  const HEADER_H = 48; // reserved for column labels
+
   for (const b of balls) {
-    // Gravity toward center
-    const dx = cx - b.x, dy = cy - b.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist > 1) { b.vx += (dx / dist) * 0.04; b.vy += (dy / dist) * 0.04; }
+    // Downward gravity
+    b.vy += GRAVITY;
+
+    // Horizontal lane attraction — soft pull toward column center
+    const laneCenter = (b.bucket + 0.5) * colW;
+    b.vx += (laneCenter - b.x) * 0.003;
 
     // Mouse repulsion
     const mdx = mx - b.x, mdy = my - b.y;
     const md = Math.hypot(mdx, mdy);
-    const repel = b.radius + 70;
+    const repel = b.radius + 60;
     if (md < repel && md > 0.5) {
-      const f = ((repel - md) / repel) * 2.5;
+      const f = ((repel - md) / repel) * 3;
       b.vx -= (mdx / md) * f; b.vy -= (mdy / md) * f;
     }
 
-    b.vx *= 0.97; b.vy *= 0.97;
+    b.vx *= DAMPING; b.vy *= DAMPING;
     b.x += b.vx; b.y += b.vy;
 
-    // Wall bounce with padding
-    const pad = b.radius + 6;
-    if (b.x < pad) { b.x = pad; b.vx = Math.abs(b.vx) * 0.65; }
-    if (b.x > w - pad) { b.x = w - pad; b.vx = -Math.abs(b.vx) * 0.65; }
-    if (b.y < pad) { b.y = pad; b.vy = Math.abs(b.vy) * 0.65; }
-    if (b.y > h - pad) { b.y = h - pad; b.vy = -Math.abs(b.vy) * 0.65; }
+    // Floor
+    const floor = h - b.radius - 4;
+    if (b.y > floor) { b.y = floor; b.vy = -Math.abs(b.vy) * FLOOR_BOUNCE; b.vx *= 0.85; }
+
+    // Ceiling (below header)
+    const ceil = HEADER_H + b.radius;
+    if (b.y < ceil) { b.y = ceil; b.vy = Math.abs(b.vy) * 0.3; }
+
+    // Lane walls (hard boundaries)
+    const laneLeft = b.bucket * colW + b.radius + 2;
+    const laneRight = (b.bucket + 1) * colW - b.radius - 2;
+    if (b.x < laneLeft) { b.x = laneLeft; b.vx = Math.abs(b.vx) * WALL_BOUNCE; }
+    if (b.x > laneRight) { b.x = laneRight; b.vx = -Math.abs(b.vx) * WALL_BOUNCE; }
   }
 
-  // Ball-ball collision
+  // Ball-ball collisions (only within same bucket for performance)
   for (let i = 0; i < balls.length; i++) {
     for (let j = i + 1; j < balls.length; j++) {
+      if (balls[i].bucket !== balls[j].bucket) continue;
       const a = balls[i], b = balls[j];
       const dx = b.x - a.x, dy = b.y - a.y;
       const dist = Math.hypot(dx, dy);
-      const min = a.radius + b.radius + 3;
+      const min = a.radius + b.radius + 2;
       if (dist < min && dist > 0.01) {
         const nx = dx / dist, ny = dy / dist;
         const overlap = (min - dist) * 0.5;
         a.x -= nx * overlap; a.y -= ny * overlap;
         b.x += nx * overlap; b.y += ny * overlap;
-        const dvx = a.vx - b.vx, dvy = a.vy - b.vy;
-        const dot = dvx * nx + dvy * ny;
+        const dot = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
         if (dot > 0) {
-          a.vx -= dot * nx * 0.55; a.vy -= dot * ny * 0.55;
-          b.vx += dot * nx * 0.55; b.vy += dot * ny * 0.55;
+          a.vx -= dot * nx * 0.5; a.vy -= dot * ny * 0.5;
+          b.vx += dot * nx * 0.5; b.vy += dot * ny * 0.5;
         }
       }
     }
   }
 }
 
-interface HoverInfo { pr: PrCardData; screenX: number; screenY: number; label: Ball["label"]; }
+// ── Component ─────────────────────────────────────────────────────────────────
 
+interface HoverInfo { pr: PrCardData; screenX: number; screenY: number; }
 interface Props { refreshIntervalMs: number; myLogin: string; repo: string; }
 
-export default function PhysicsView({ refreshIntervalMs, myLogin, repo }: Props) {
+export default function PhysicsView({ refreshIntervalMs, repo }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ballsRef = useRef<Ball[]>([]);
   const mouseRef = useRef({ x: -9999, y: -9999 });
   const rafRef = useRef<number>(0);
+  const bgRef = useRef({ bg: "#0c0c0f", divider: "rgba(255,255,255,0.07)", text: "rgba(255,255,255,0.25)" });
   const [hovered, setHovered] = useState<HoverInfo | null>(null);
-  const [ready, setReady] = useState(false);
+  const [initTrigger, setInitTrigger] = useState(0);
+  const initialized = useRef(false);
+  const [syncKey, setSyncKey] = useState(0);
 
-  const { data: myPrs, isLoading: myLoad, mutate: mm } = useSWR<MyPrsResponse>("/api/my-prs", fetcher, { refreshInterval: refreshIntervalMs });
-  const { data: tmPrs, isLoading: tmLoad, mutate: mt } = useSWR<TeammatePrsResponse>("/api/teammate-prs", fetcher, { refreshInterval: refreshIntervalMs });
-  const { data: rvPrs, isLoading: rvLoad, mutate: mr } = useSWR<ReviewRequestsResponse>("/api/review-requests", fetcher, { refreshInterval: refreshIntervalMs });
-  const handleRefresh = useCallback(() => { mm(); mt(); mr(); setReady(false); }, [mm, mt, mr]);
+  const { data: myPrs, isLoading: myLoad, mutate: mm } = useSWR<MyPrsResponse>(`/api/my-prs?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
+  const { data: tmPrs, isLoading: tmLoad, mutate: mt } = useSWR<TeammatePrsResponse>(`/api/teammate-prs?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
+  const { data: rvPrs, isLoading: rvLoad, mutate: mr } = useSWR<ReviewRequestsResponse>(`/api/review-requests?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
+  const handleRefresh = useCallback(() => {
+    setSyncKey(k => k + 1); initialized.current = false; setInitTrigger(t => t + 1);
+    mm(); mt(); mr();
+  }, [mm, mt, mr]);
 
-  // Init balls once data arrives
+  // Batch SWR for details — prefetch while physics loads
+  const allNumbers = useMemo(() => {
+    const nums: number[] = [];
+    myPrs?.active?.forEach(p => nums.push(p.number));
+    myPrs?.drafts?.forEach(p => nums.push(p.number));
+    tmPrs && Object.values(tmPrs.byTeammate).flat().forEach(p => nums.push(p.number));
+    rvPrs?.reviewRequests?.forEach(p => nums.push(p.number));
+    return [...new Set(nums)];
+  }, [myPrs, tmPrs, rvPrs]);
+  const { data: detailsMap } = useSWR<Record<number, PrDetails>>(
+    allNumbers.length > 0 ? `/api/pr-details-batch?numbers=${allNumbers.join(",")}&v=${syncKey}` : null,
+    fetcher, { revalidateOnFocus: false, refreshInterval: 0 }
+  );
+
+  // Track theme without polling getComputedStyle
   useEffect(() => {
-    if (!myPrs || !tmPrs || ready) return;
+    const update = () => {
+      const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      bgRef.current = dark
+        ? { bg: "#0c0c0f", divider: "rgba(255,255,255,0.07)", text: "rgba(255,255,255,0.25)" }
+        : { bg: "#ffffff", divider: "rgba(0,0,0,0.08)", text: "rgba(0,0,0,0.25)" };
+    };
+    update();
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
+  // Init balls when data + canvas are ready
+  useEffect(() => {
+    if (!myPrs || !tmPrs) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const w = canvas.offsetWidth, h = canvas.offsetHeight;
-    if (w < 10 || h < 10) return; // canvas not rendered yet
+    if (w < 10 || h < 10) return;
+    canvas.width = w; canvas.height = h;
+    initialized.current = true;
 
     const rvArr = rvPrs?.reviewRequests ?? [];
     const myArr = [...(myPrs.active ?? []), ...(myPrs.drafts ?? [])];
     const tmArr = Object.values(tmPrs.byTeammate).flat();
     const rvIds = new Set(rvArr.map(p => p.number));
     const myIds = new Set(myArr.map(p => p.number));
-    const filteredTm = tmArr.filter(p => !rvIds.has(p.number) && !myIds.has(p.number));
 
-    canvas.width = w; canvas.height = h;
     ballsRef.current = [
-      ...makeBalls(rvArr, "review-req", w, h),
-      ...makeBalls(myArr, "mine", w, h),
-      ...makeBalls(filteredTm, "teammate", w, h),
+      ...makeBalls(rvArr, 0, w),
+      ...makeBalls(myArr, 1, w),
+      ...makeBalls(tmArr.filter(p => !rvIds.has(p.number) && !myIds.has(p.number)), 2, w),
     ];
-    setReady(true);
-  }, [myPrs, tmPrs, rvPrs, ready]);
+  }, [myPrs, tmPrs, rvPrs, initTrigger]);
 
-  // Canvas draw loop
+  // Draw loop — runs once, reads refs
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const resize = () => {
-      canvas.width = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
-      // re-init if we have data
-      setReady(false);
-    };
-    const ro = new ResizeObserver(resize);
+    const ro = new ResizeObserver(() => {
+      const w = canvas.offsetWidth, h = canvas.offsetHeight;
+      if (w < 10 || h < 10) return;
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w; canvas.height = h;
+        initialized.current = false;
+        setInitTrigger(t => t + 1);
+      }
+    });
     ro.observe(canvas.parentElement!);
 
     let lastHoverId: number | null = null;
@@ -158,30 +212,42 @@ export default function PhysicsView({ refreshIntervalMs, myLogin, repo }: Props)
     const draw = () => {
       const w = canvas.width, h = canvas.height;
       if (w < 1 || h < 1) { rafRef.current = requestAnimationFrame(draw); return; }
+      const colW = w / 3;
+      const { bg, divider, text } = bgRef.current;
 
-      // Use computed CSS variable for background (respects light/dark)
-      const style = getComputedStyle(canvas);
-      const bgColor = style.getPropertyValue("--bg").trim() || "#0c0c0f";
-      const dotGridColor = bgColor.startsWith("#f") || bgColor.startsWith("#fff")
-        ? "rgba(0,0,0,0.04)"
-        : "rgba(255,255,255,0.025)";
-      ctx.fillStyle = bgColor;
-      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
 
-      // Subtle dot grid
-      ctx.fillStyle = dotGridColor;
-      const gs = 36;
-      for (let x = gs; x < w; x += gs)
-        for (let y = gs; y < h; y += gs) {
-          ctx.beginPath(); ctx.arc(x, y, 0.8, 0, Math.PI * 2); ctx.fill();
+      // Column dividers
+      ctx.strokeStyle = divider; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(colW, 0); ctx.lineTo(colW, h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(colW * 2, 0); ctx.lineTo(colW * 2, h); ctx.stroke();
+
+      // Column headers
+      ctx.fillStyle = text;
+      ctx.font = "700 11px Manrope, sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      BUCKET_LABELS.forEach((label, i) => {
+        const x = (i + 0.5) * colW;
+        // Accent stripe
+        ctx.fillStyle = BUCKET_COLORS[i] + "22";
+        ctx.fillRect(i * colW, 0, colW, 40);
+        ctx.fillStyle = BUCKET_COLORS[i];
+        ctx.fillText(label.toUpperCase(), x, 20);
+        // Count
+        const count = ballsRef.current.filter(b => b.bucket === i).length;
+        if (count > 0) {
+          ctx.fillStyle = text;
+          ctx.font = "500 10px 'JetBrains Mono', monospace";
+          ctx.fillText(String(count), x, 34);
+          ctx.font = "700 11px Manrope, sans-serif";
         }
+      });
 
-      if (!ready) {
-        // Loading state
-        ctx.fillStyle = "rgba(135,135,160,0.3)";
+      if (!initialized.current) {
+        ctx.fillStyle = text;
         ctx.font = "12px Manrope, sans-serif";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText("Loading PRs…", w / 2, h / 2);
+        ctx.fillText((!myPrs || !tmPrs) ? "Loading…" : "Settling…", w / 2, h / 2);
         rafRef.current = requestAnimationFrame(draw);
         return;
       }
@@ -195,36 +261,25 @@ export default function PhysicsView({ refreshIntervalMs, myLogin, repo }: Props)
         const dx = mouseRef.current.x - b.x, dy = mouseRef.current.y - b.y;
         const isHover = Math.hypot(dx, dy) < b.radius;
         if (isHover) { newHoverId = b.id; hoveredBall = b; }
+        const r = isHover ? b.radius * 1.15 : b.radius;
 
-        const r = isHover ? b.radius * 1.18 : b.radius;
-
-        // Ambient glow
+        // Glow on hover
         if (isHover) {
-          const glow = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, r * 2.5);
-          glow.addColorStop(0, b.color + "30");
-          glow.addColorStop(1, "transparent");
+          const glow = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, r * 2.2);
+          glow.addColorStop(0, b.color + "40"); glow.addColorStop(1, "transparent");
           ctx.fillStyle = glow;
-          ctx.beginPath(); ctx.arc(b.x, b.y, r * 2.5, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(b.x, b.y, r * 2.2, 0, Math.PI * 2); ctx.fill();
         }
 
-        // Ball fill — clean radial gradient
-        const grad = ctx.createRadialGradient(b.x - r * 0.28, b.y - r * 0.28, r * 0.05, b.x, b.y, r);
-        grad.addColorStop(0, b.color + "ff");
-        grad.addColorStop(0.55, b.color + "bb");
-        grad.addColorStop(1, b.color + "40");
+        // Ball
+        const grad = ctx.createRadialGradient(b.x - r * 0.3, b.y - r * 0.35, r * 0.05, b.x, b.y, r);
+        grad.addColorStop(0, b.color + "ff"); grad.addColorStop(0.6, b.color + "cc"); grad.addColorStop(1, b.color + "44");
         ctx.fillStyle = grad;
         ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, Math.PI * 2); ctx.fill();
 
-        // Review-req ring (indigo)
-        if (b.label === "review-req") {
-          ctx.strokeStyle = REVIEW_COLOR + (isHover ? "dd" : "88");
-          ctx.lineWidth = isHover ? 2.5 : 1.5;
-          ctx.beginPath(); ctx.arc(b.x, b.y, r + 4, 0, Math.PI * 2); ctx.stroke();
-        }
-
-        // PR number text
-        const fontSize = Math.max(9, Math.min(14, r * 0.38));
-        ctx.fillStyle = isHover ? "rgba(255,255,255,0.95)" : "rgba(240,240,245,0.75)";
+        // PR number
+        const fontSize = Math.max(8, Math.min(13, r * 0.38));
+        ctx.fillStyle = isHover ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.8)";
         ctx.font = `${isHover ? 600 : 500} ${fontSize}px "JetBrains Mono", monospace`;
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText(`#${b.pr.number}`, b.x, b.y);
@@ -233,7 +288,7 @@ export default function PhysicsView({ refreshIntervalMs, myLogin, repo }: Props)
       if (newHoverId !== lastHoverId) {
         lastHoverId = newHoverId;
         if (hoveredBall) {
-          setHovered({ pr: hoveredBall.pr, screenX: hoveredBall.x, screenY: hoveredBall.y, label: hoveredBall.label });
+          setHovered({ pr: hoveredBall.pr, screenX: hoveredBall.x, screenY: hoveredBall.y });
           canvas.style.cursor = "pointer";
         } else {
           setHovered(null);
@@ -244,9 +299,8 @@ export default function PhysicsView({ refreshIntervalMs, myLogin, repo }: Props)
       rafRef.current = requestAnimationFrame(draw);
     };
     draw();
-
     return () => { cancelAnimationFrame(rafRef.current); ro.disconnect(); };
-  }, [ready]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isLoading = myLoad || tmLoad || rvLoad;
 
@@ -254,45 +308,13 @@ export default function PhysicsView({ refreshIntervalMs, myLogin, repo }: Props)
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <NavBar repo={repo} onRefresh={handleRefresh} isLoading={isLoading} lastFetchedAt={myPrs?.lastFetchedAt} />
 
-      {/* Legend bar */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 20,
-        padding: "0 20px", height: 38, flexShrink: 0,
-        borderBottom: "1px solid var(--border)", background: "var(--bg-subtle)",
-      }}>
-        {([
-          { color: REVIEW_COLOR, label: "needs review", ring: true },
-          { color: STATE_COLORS.open, label: "open / active" },
-          { color: STATE_COLORS.draft, label: "draft" },
-          { color: STATE_COLORS.merged, label: "merged" },
-        ] as { color: string; label: string; ring?: boolean }[]).map(({ color, label, ring }) => (
-          <div key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <div style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: ring ? "transparent" : color,
-              border: ring ? `2px solid ${color}` : "none",
-              outline: ring ? `1px solid ${color}30` : "none",
-            }} />
-            <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{label}</span>
-          </div>
-        ))}
-        <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>
-          ball size = age · hover to inspect · cursor repels
-        </span>
-      </div>
-
-      {/* Canvas container — fills all remaining space */}
       <div id="main-content" style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0 }}>
         <canvas
           ref={canvasRef}
           role="img"
-          aria-label={
-            ready
-              ? `Physics simulation of ${ballsRef.current.length} pull requests. Each ball represents a PR — size indicates age. Use the list below for accessible navigation.`
-              : "Loading pull request physics simulation"
-          }
+          aria-label="PR bucket simulation — three columns: Review Queue, My PRs, Team. Ball size = PR age."
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }}
-          onMouseMove={(e) => {
+          onMouseMove={e => {
             const rect = e.currentTarget.getBoundingClientRect();
             mouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
           }}
@@ -300,81 +322,50 @@ export default function PhysicsView({ refreshIntervalMs, myLogin, repo }: Props)
           onClick={() => hovered && window.open(hovered.pr.htmlUrl, "_blank")}
         />
 
-        {/* Screen-reader accessible PR list (visually hidden) */}
-        {ready && (
-          <ul className="sr-only" aria-label="Pull requests (accessible list)">
-            {ballsRef.current.map((b) => (
-              <li key={b.id}>
-                <a href={b.pr.htmlUrl} target="_blank" rel="noopener noreferrer">
-                  PR #{b.pr.number}: {b.pr.title} — {b.pr.state}, by @{b.pr.author.login}
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
+        {/* Screen reader list */}
+        <ul className="sr-only" aria-label="Pull requests">
+          {ballsRef.current.map(b => (
+            <li key={b.id}>
+              <a href={b.pr.htmlUrl} target="_blank" rel="noopener noreferrer">
+                PR #{b.pr.number}: {b.pr.title} — {b.pr.state}, @{b.pr.author.login}
+              </a>
+            </li>
+          ))}
+        </ul>
 
-        {/* Hover tooltip — Stripe card style */}
-        {hovered && (
-          <div style={{
-            position: "absolute",
-            left: Math.min(hovered.screenX + 16, window.innerWidth - 300),
-            top: Math.max(8, hovered.screenY - 120),
-            background: "var(--bg-card)",
-            border: "1px solid var(--border-strong)",
-            borderRadius: 10,
-            padding: "14px 16px",
-            width: 272,
-            pointerEvents: "none",
-            boxShadow: "0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "var(--text-muted)", fontWeight: 600 }}>
-                #{hovered.pr.number}
-              </span>
-              <span style={{
-                fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase",
-                color: STATE_COLORS[hovered.pr.state] ?? "var(--text-secondary)",
-                background: (STATE_COLORS[hovered.pr.state] ?? "#52525b") + "18",
-                padding: "1px 6px", borderRadius: 3,
-              }}>
-                {hovered.pr.state}
-              </span>
-              {hovered.label === "review-req" && (
-                <span style={{ fontSize: 10, fontWeight: 700, color: REVIEW_COLOR, background: REVIEW_COLOR + "18", padding: "1px 6px", borderRadius: 3 }}>
-                  Review needed
-                </span>
-              )}
-            </div>
-            <p style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", lineHeight: 1.45, marginBottom: 10 }}>
-              {hovered.pr.title}
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 3, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
-              <Row label="Author" value={`@${hovered.pr.author.login}`} />
-              <Row label="Opened" value={formatDistanceToNow(new Date(hovered.pr.createdAt), { addSuffix: true })} />
-              <Row label="Updated" value={formatDistanceToNow(new Date(hovered.pr.updatedAt), { addSuffix: true })} />
-            </div>
-            {hovered.pr.labels.length > 0 && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 10 }}>
-                {hovered.pr.labels.map(l => (
-                  <span key={l.id} style={{ background: `#${l.color}`, color: "#000", borderRadius: 3, padding: "1px 6px", fontSize: 10, fontWeight: 600 }}>
-                    {l.name}
-                  </span>
+        {/* Hover tooltip */}
+        {hovered && (() => {
+          const d = detailsMap?.[hovered.pr.number];
+          return (
+            <div style={{ position: "absolute", left: Math.min(hovered.screenX + 16, (typeof window !== "undefined" ? window.innerWidth : 1440) - 290), top: Math.max(50, hovered.screenY - 110), background: "var(--bg-card)", border: "1px solid var(--border-strong)", borderRadius: 10, padding: "14px 16px", width: 268, pointerEvents: "none", boxShadow: "0 8px 32px rgba(0,0,0,.55)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
+                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)", fontWeight: 600 }}>#{hovered.pr.number}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: STATE_COLORS[hovered.pr.state], background: STATE_COLORS[hovered.pr.state] + "18", padding: "1px 6px", borderRadius: 3 }}>{hovered.pr.state}</span>
+              </div>
+              <p style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", lineHeight: 1.4, margin: "0 0 10px" }}>{hovered.pr.title}</p>
+              <div style={{ borderTop: "1px solid var(--border)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 3 }}>
+                {[
+                  ["Author", `@${hovered.pr.author.login}`],
+                  ["Opened", formatDistanceToNow(new Date(hovered.pr.createdAt), { addSuffix: true })],
+                  ["Updated", formatDistanceToNow(new Date(hovered.pr.updatedAt), { addSuffix: true })],
+                  ...(d ? [["Review", d.reviewState.replace("_", " ")], ["CI", d.ciState]] : []),
+                ].map(([l, v]) => (
+                  <div key={l} style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{l}</span>
+                    <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{v}</span>
+                  </div>
                 ))}
               </div>
-            )}
-            <p style={{ fontSize: 10, color: "var(--accent)", marginTop: 10 }}>Click to open →</p>
-          </div>
-        )}
+              {hovered.pr.labels.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 8 }}>
+                  {hovered.pr.labels.map(l => <span key={l.id} style={{ background: `#${l.color}`, borderRadius: 3, padding: "1px 5px", fontSize: 10, fontWeight: 600, color: "#000" }}>{l.name}</span>)}
+                </div>
+              )}
+              <p style={{ fontSize: 10, color: "var(--accent)", marginTop: 8 }}>Click to open →</p>
+            </div>
+          );
+        })()}
       </div>
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{label}</span>
-      <span style={{ fontSize: 11, color: "var(--text-secondary)", textAlign: "right" }}>{value}</span>
     </div>
   );
 }

@@ -1,8 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import useSWRImmutable from "swr/immutable";
-import { useCallback } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { formatDistanceToNow, differenceInDays } from "date-fns";
 import type {
   PrCardData, PrDetails,
@@ -10,6 +9,8 @@ import type {
 } from "@/types/pr";
 import NavBar from "@/components/NavBar";
 import { fetcher } from "@/lib/fetcher";
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function ageColor(createdAt: string) {
   const d = differenceInDays(new Date(), new Date(createdAt));
@@ -25,26 +26,48 @@ function ageLabel(createdAt: string) {
   return `${d}d`;
 }
 
-const STATE_DOT: Record<string, string> = {
+const STATE_COLOR: Record<string, string> = {
   draft: "var(--state-draft)",
   open: "var(--state-open)",
   merged: "var(--state-merged)",
   closed: "var(--state-closed)",
 };
 
-// ── Compact PR chip ─────────────────────────────────────────────────────────
+// ── PrChip ───────────────────────────────────────────────────────────────────
 
-function PrChip({ pr, showUrgency = false }: { pr: PrCardData; showUrgency?: boolean }) {
-  const { data: details } = useSWRImmutable<PrDetails>(
-    `/api/pr-details?number=${pr.number}`, fetcher
-  );
-  const dotColor = showUrgency ? ageColor(pr.createdAt) : STATE_DOT[pr.state];
+interface PrChipProps {
+  pr: PrCardData;
+  showUrgency?: boolean;
+  details?: PrDetails;
+}
+
+function PrChip({ pr, showUrgency, details }: PrChipProps) {
+  const dotColor = showUrgency ? ageColor(pr.createdAt) : STATE_COLOR[pr.state];
   const age = showUrgency ? ageLabel(pr.createdAt) : null;
   const rel = formatDistanceToNow(new Date(pr.updatedAt), { addSuffix: true });
 
-  const ageDesc = age ? `, open ${age} ago` : "";
-  const reviewDesc = details
-    ? `, review: ${details.reviewState.replace("_", " ")}, CI: ${details.ciState}`
+  const reviewLabel =
+    details?.reviewState === "approved" ? "✓ approved"
+    : details?.reviewState === "changes_requested" ? "✗ changes"
+    : "· review";
+  const reviewColor =
+    details?.reviewState === "approved" ? "var(--review-approved)"
+    : details?.reviewState === "changes_requested" ? "var(--review-changes)"
+    : "var(--text-muted)";
+  const ciLabel =
+    details?.ciState === "success" ? "CI ✓"
+    : details?.ciState === "failure" ? "CI ✗"
+    : details?.ciState === "pending" ? "CI …"
+    : null;
+  const ciColor =
+    details?.ciState === "success" ? "var(--ci-success)"
+    : details?.ciState === "failure" ? "var(--ci-failure)"
+    : details?.ciState === "pending" ? "var(--ci-pending)"
+    : "var(--text-muted)";
+
+  const ageDesc = age ? `, open ${age}` : "";
+  const statusDesc = details
+    ? `, review ${details.reviewState.replace("_", " ")}, CI ${details.ciState}`
     : "";
 
   return (
@@ -52,90 +75,28 @@ function PrChip({ pr, showUrgency = false }: { pr: PrCardData; showUrgency?: boo
       href={pr.htmlUrl}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={`PR #${pr.number}: ${pr.title} by ${pr.author.login}${ageDesc}${reviewDesc} — opens on GitHub`}
-      style={{
-        display: "flex",
-        gap: 9,
-        padding: "9px 11px",
-        background: "var(--bg-card)",
-        border: "1px solid var(--border)",
-        borderRadius: 7,
-        minWidth: 200,
-        maxWidth: 260,
-        flexShrink: 0,
-        textDecoration: "none",
-        cursor: "pointer",
-        transition: "background 0.1s, border-color 0.1s",
-      }}
-      onMouseEnter={(e) => {
-        const el = e.currentTarget as HTMLAnchorElement;
-        el.style.background = "var(--bg-card-hover)";
-        el.style.borderColor = "var(--border-strong)";
-      }}
-      onMouseLeave={(e) => {
-        const el = e.currentTarget as HTMLAnchorElement;
-        el.style.background = "var(--bg-card)";
-        el.style.borderColor = "var(--border)";
-      }}
+      aria-label={`PR #${pr.number}: ${pr.title} by ${pr.author.login}${ageDesc}${statusDesc}`}
+      className="pr-chip"
     >
-      {/* Urgency / state dot — decorative, meaning conveyed via aria-label above */}
-      <div style={{ paddingTop: 3, flexShrink: 0 }} aria-hidden="true">
-        <div style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor }} />
-      </div>
-
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-        {/* PR number + age */}
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
-          <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, fontWeight: 600, color: "var(--text-muted)", letterSpacing: "0.01em" }}>
-            #{pr.number}
-          </span>
-          {age && (
-            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, fontWeight: 600, color: dotColor, flexShrink: 0 }}>
-              {age}
-            </span>
-          )}
+      <div aria-hidden="true" className="pr-chip-dot" style={{ background: dotColor }} />
+      <div className="pr-chip-body">
+        <div className="pr-chip-header">
+          <span className="pr-chip-number">#{pr.number}</span>
+          {age && <span style={{ color: dotColor }} className="pr-chip-age">{age}</span>}
         </div>
-
-        {/* Title */}
-        <span style={{
-          fontSize: 12, fontWeight: 500, color: "var(--text-primary)",
-          lineHeight: 1.35, overflow: "hidden", display: "-webkit-box",
-          WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-        }}>
-          {pr.title}
-        </span>
-
-        {/* Meta row */}
-        <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 1 }}>
-          <span style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 400 }}>
-            {pr.author.login}
-          </span>
+        <span className="pr-chip-title">{pr.title}</span>
+        <div className="pr-chip-meta">
+          <span className="pr-chip-author">{pr.author.login}</span>
           {details && (
             <>
-              <span style={{ color: "var(--text-muted)", fontSize: 10 }}>·</span>
-              <span style={{
-                fontSize: 10, fontWeight: 600, letterSpacing: "0.02em",
-                color: details.reviewState === "approved" ? "var(--review-approved)"
-                  : details.reviewState === "changes_requested" ? "var(--review-changes)"
-                  : "var(--text-muted)",
-              }}>
-                {details.reviewState === "approved" ? "✓ approved"
-                  : details.reviewState === "changes_requested" ? "✗ changes"
-                  : "· review"}
-              </span>
-              <span style={{ color: "var(--text-muted)", fontSize: 10 }}>·</span>
-              <span style={{
-                fontSize: 10, fontWeight: 600,
-                color: details.ciState === "success" ? "var(--ci-success)"
-                  : details.ciState === "failure" ? "var(--ci-failure)"
-                  : details.ciState === "pending" ? "var(--ci-pending)"
-                  : "var(--text-muted)",
-              }}>
-                {details.ciState === "success" ? "CI ✓"
-                  : details.ciState === "failure" ? "CI ✗"
-                  : details.ciState === "pending" ? "CI …"
-                  : ""}
-              </span>
+              <span aria-hidden="true" className="pr-chip-sep">·</span>
+              <span style={{ color: reviewColor }} className="pr-chip-status">{reviewLabel}</span>
+              {ciLabel && (
+                <>
+                  <span aria-hidden="true" className="pr-chip-sep">·</span>
+                  <span style={{ color: ciColor }} className="pr-chip-status">{ciLabel}</span>
+                </>
+              )}
             </>
           )}
         </div>
@@ -144,176 +105,187 @@ function PrChip({ pr, showUrgency = false }: { pr: PrCardData; showUrgency?: boo
   );
 }
 
-// ── Lane ────────────────────────────────────────────────────────────────────
+// ── Lane ─────────────────────────────────────────────────────────────────────
 
 interface LaneProps {
   label: string;
   sublabel?: string;
   prs?: PrCardData[];
+  detailsMap?: Record<number, PrDetails>;
   isLoading: boolean;
   showUrgency?: boolean;
   emptyMsg?: string;
   labelColor?: string;
 }
 
-function Lane({ label, sublabel, prs, isLoading, showUrgency, emptyMsg = "—", labelColor }: LaneProps) {
+function Lane({ label, sublabel, prs, detailsMap, isLoading, showUrgency, emptyMsg = "—", labelColor }: LaneProps) {
   const count = prs?.length ?? 0;
   return (
-    <div style={{ display: "flex", gap: 0, minHeight: 56 }}>
-      {/* Fixed-width label column */}
-      <div style={{ width: 160, flexShrink: 0, paddingTop: 10, paddingRight: 20 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: labelColor ?? "var(--text-secondary)", letterSpacing: "-0.01em" }}>
-          {label}
-        </div>
-        {sublabel && (
-          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{sublabel}</div>
-        )}
-        {!isLoading && count > 0 && (
-          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4, fontFamily: "JetBrains Mono, monospace" }}>
-            {count}
-          </div>
-        )}
+    <div className="lane">
+      <div className="lane-label-col">
+        <div className="lane-label" style={{ color: labelColor ?? "var(--text-secondary)" }}>{label}</div>
+        {sublabel && <div className="lane-sublabel">{sublabel}</div>}
+        {!isLoading && count > 0 && <div className="lane-count">{count}</div>}
       </div>
-
-      {/* Scrollable chips — list for screen readers */}
       <ul
+        className="lane-chips"
         aria-label={label}
         aria-busy={isLoading}
         role="list"
-        style={{
-          flex: 1,
-          display: "flex",
-          gap: 7,
-          overflowX: "auto",
-          paddingBottom: 8,
-          paddingTop: 2,
-          paddingRight: 4,
-          alignItems: "flex-start",
-          minWidth: 0,
-          listStyle: "none",
-        }}
       >
-        {isLoading && [1, 2, 3].map(i => (
-          <li key={i} aria-hidden="true" style={{ minWidth: 200, height: 68, borderRadius: 7, background: "var(--bg-card)", border: "1px solid var(--border)", flexShrink: 0, animation: "pulse 1.5s ease infinite" }} />
-        ))}
-        {!isLoading && count === 0 && (
-          <li style={{ fontSize: 12, color: "var(--text-muted)", paddingTop: 10, fontStyle: "italic", listStyle: "none" }}>
-            {emptyMsg}
-          </li>
-        )}
-        {!isLoading && prs?.map(pr => (
-          <li key={pr.number} style={{ listStyle: "none" }}>
-            <PrChip pr={pr} showUrgency={showUrgency} />
-          </li>
-        ))}
+        {isLoading
+          ? [1, 2, 3].map(i => <li key={i} aria-hidden="true" className="chip-skeleton" />)
+          : count === 0
+          ? <li className="lane-empty">{emptyMsg}</li>
+          : prs!.map(pr => (
+              <li key={pr.number}>
+                <PrChip pr={pr} showUrgency={showUrgency} details={detailsMap?.[pr.number]} />
+              </li>
+            ))
+        }
       </ul>
     </div>
   );
 }
 
-// ── Section wrapper ──────────────────────────────────────────────────────────
+// ── Section ───────────────────────────────────────────────────────────────────
 
 function Section({ title, badge, children }: { title: string; badge?: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{
-        display: "flex", alignItems: "center", gap: 8,
-        paddingBottom: 10, marginBottom: 4,
-      }}>
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-muted)" }}>
-          {title}
-        </span>
-        {badge && (
-          <span style={{
-            fontSize: 10, fontFamily: "JetBrains Mono, monospace", color: "var(--text-muted)",
-            background: "rgba(255,255,255,0.04)", border: "1px solid var(--border)",
-            borderRadius: 3, padding: "0 5px", lineHeight: "16px",
-          }}>
-            {badge}
-          </span>
-        )}
-        <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+    <div className="section">
+      <div className="section-header">
+        <span className="section-title">{title}</span>
+        {badge && <span className="section-badge">{badge}</span>}
+        <div className="section-rule" />
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {children}
-      </div>
+      {children}
     </div>
   );
 }
 
-// ── Main ─────────────────────────────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────────────────────────
 
 interface Props { refreshIntervalMs: number; myLogin: string; repo: string; }
 
 export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props) {
-  const { data: myPrs, isLoading: myLoad, mutate: mm } =
-    useSWR<MyPrsResponse>("/api/my-prs", fetcher, { refreshInterval: refreshIntervalMs });
-  const { data: tmPrs, isLoading: tmLoad, mutate: mt } =
-    useSWR<TeammatePrsResponse>("/api/teammate-prs", fetcher, { refreshInterval: refreshIntervalMs });
-  const { data: rvPrs, isLoading: rvLoad, mutate: mr } =
-    useSWR<ReviewRequestsResponse>("/api/review-requests", fetcher, { refreshInterval: refreshIntervalMs });
+  const [syncKey, setSyncKey] = useState(0);
 
-  const handleRefresh = useCallback(() => { mm(); mt(); mr(); }, [mm, mt, mr]);
+  const { data: myPrs, isLoading: myLoad, mutate: mm } =
+    useSWR<MyPrsResponse>(`/api/my-prs?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
+  const { data: tmPrs, isLoading: tmLoad, mutate: mt } =
+    useSWR<TeammatePrsResponse>(`/api/teammate-prs?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
+  const { data: rvPrs, isLoading: rvLoad, mutate: mr } =
+    useSWR<ReviewRequestsResponse>(`/api/review-requests?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
+
+  // Collect all PR numbers across all sections
+  const allNumbers = useMemo(() => {
+    const nums: number[] = [];
+    myPrs?.drafts?.forEach(p => nums.push(p.number));
+    myPrs?.active?.forEach(p => nums.push(p.number));
+    myPrs?.recentlyClosed?.forEach(p => nums.push(p.number));
+    rvPrs?.reviewRequests?.forEach(p => nums.push(p.number));
+    tmPrs && Object.values(tmPrs.byTeammate).flat().forEach(p => nums.push(p.number));
+    return [...new Set(nums)];
+  }, [myPrs, tmPrs, rvPrs]);
+
+  // Single batch SWR for all PR details — only fetches when we have PR numbers
+  const batchKey = allNumbers.length > 0
+    ? `/api/pr-details-batch?numbers=${allNumbers.join(",")}&v=${syncKey}`
+    : null;
+  const { data: detailsMap } = useSWR<Record<number, PrDetails>>(
+    batchKey, fetcher,
+    { revalidateOnFocus: false, refreshInterval: 0 }
+  );
+
+  const handleRefresh = useCallback(() => {
+    setSyncKey(k => k + 1);
+    mm(); mt(); mr();
+  }, [mm, mt, mr]);
 
   const isLoading = myLoad || tmLoad || rvLoad;
-  const lastFetchedAt = myPrs?.lastFetchedAt;
-
-  const reviewQueue = rvPrs?.reviewRequests
-    ? [...rvPrs.reviewRequests].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt))
-    : undefined;
-
   const tmTotal = tmPrs
     ? Object.values(tmPrs.byTeammate).reduce((n, ps) => n + ps.length, 0)
     : 0;
 
+  const reviewQueue = useMemo(() =>
+    rvPrs?.reviewRequests
+      ? [...rvPrs.reviewRequests].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt))
+      : undefined,
+    [rvPrs]
+  );
+
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <NavBar repo={repo} onRefresh={handleRefresh} isLoading={isLoading} lastFetchedAt={lastFetchedAt} />
+    <div className="view-root">
+      <NavBar repo={repo} onRefresh={handleRefresh} isLoading={isLoading} lastFetchedAt={myPrs?.lastFetchedAt} />
+      <main id="main-content" className="control-main">
 
-      <main id="main-content" style={{ flex: 1, overflowY: "auto", padding: "20px 24px 48px" }}>
-
-        {/* Review queue */}
         <Section title="Review queue" badge={reviewQueue ? String(reviewQueue.length) : undefined}>
           <Lane
             label="Needs your review"
             sublabel="oldest → most urgent"
             prs={reviewQueue}
+            detailsMap={detailsMap}
             isLoading={rvLoad}
             showUrgency
             emptyMsg="Inbox zero"
-            labelColor={reviewQueue && reviewQueue.length > 0 ? "var(--danger)" : "var(--text-secondary)"}
+            labelColor={reviewQueue?.length ? "var(--danger)" : undefined}
           />
         </Section>
 
-        <div style={{ height: 24 }} />
+        <div className="section-gap" />
 
-        {/* My PRs */}
         <Section title={`@${myLogin}`}>
-          <Lane label="Active" prs={myPrs?.active} isLoading={myLoad} emptyMsg="No active PRs" labelColor="var(--success)" />
-          <Lane label="Draft" prs={myPrs?.drafts} isLoading={myLoad} emptyMsg="No drafts" />
-          <Lane label="Recently closed" prs={myPrs?.recentlyClosed} isLoading={myLoad} emptyMsg="—" />
+          <Lane label="Active" prs={myPrs?.active} detailsMap={detailsMap} isLoading={myLoad} emptyMsg="No active PRs" labelColor="var(--success)" />
+          <Lane label="Draft" prs={myPrs?.drafts} detailsMap={detailsMap} isLoading={myLoad} emptyMsg="No drafts" />
+          <Lane label="Recently closed" prs={myPrs?.recentlyClosed} detailsMap={detailsMap} isLoading={myLoad} emptyMsg="—" />
         </Section>
 
-        <div style={{ height: 24 }} />
+        <div className="section-gap" />
 
-        {/* Team */}
         <Section title="Team" badge={tmTotal ? String(tmTotal) : undefined}>
-          {tmLoad && [1, 2].map(i => (
-            <Lane key={i} label="…" prs={undefined} isLoading emptyMsg="" />
-          ))}
-          {!tmLoad && tmPrs && Object.keys(tmPrs.byTeammate).length === 0 && (
-            <span style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>No open team PRs</span>
-          )}
-          {!tmLoad && tmPrs && Object.entries(tmPrs.byTeammate).map(([login, prs]) => (
-            <Lane key={login} label={`@${login}`} prs={prs} isLoading={false} emptyMsg="—" />
-          ))}
+          {tmLoad
+            ? [1, 2].map(i => <Lane key={i} label="…" isLoading emptyMsg="" />)
+            : tmPrs && Object.entries(tmPrs.byTeammate).map(([login, prs]) => (
+                <Lane key={login} label={`@${login}`} prs={prs} detailsMap={detailsMap} isLoading={false} emptyMsg="—" />
+              ))
+          }
         </Section>
       </main>
 
       <style>{`
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
-        ::-webkit-scrollbar { height: 3px; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); }
+        .view-root { height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+        .control-main { flex:1; overflow-y:auto; padding:20px 24px 48px; }
+
+        .section { margin-bottom:8px; }
+        .section-header { display:flex; align-items:center; gap:8px; padding-bottom:10px; margin-bottom:4px; }
+        .section-title { font-size:10px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--text-muted); }
+        .section-badge { font-size:10px; font-family:'JetBrains Mono',monospace; color:var(--text-muted); background:rgba(255,255,255,.04); border:1px solid var(--border); border-radius:3px; padding:0 5px; line-height:16px; }
+        .section-rule { flex:1; height:1px; background:var(--border); }
+        .section-gap { height:24px; }
+        @media (prefers-color-scheme:light) { .section-badge { background:rgba(0,0,0,.03); } }
+
+        .lane { display:flex; min-height:56px; }
+        .lane-label-col { width:160px; flex-shrink:0; padding-top:10px; padding-right:20px; }
+        .lane-label { font-size:11px; font-weight:600; letter-spacing:-.01em; }
+        .lane-sublabel { font-size:10px; color:var(--text-muted); margin-top:2px; }
+        .lane-count { font-size:10px; color:var(--text-muted); margin-top:4px; font-family:'JetBrains Mono',monospace; }
+        .lane-chips { flex:1; display:flex; gap:7px; overflow-x:auto; padding-bottom:8px; padding-top:2px; align-items:flex-start; min-width:0; list-style:none; }
+        .lane-empty { font-size:12px; color:var(--text-muted); padding-top:10px; font-style:italic; }
+
+        .chip-skeleton { min-width:200px; height:68px; border-radius:7px; background:var(--bg-card); border:1px solid var(--border); flex-shrink:0; animation:pulse 1.5s ease infinite; }
+
+        .pr-chip { display:flex; gap:9px; padding:9px 11px; background:var(--bg-card); border:1px solid var(--border); border-radius:7px; min-width:200px; max-width:260px; flex-shrink:0; text-decoration:none; cursor:pointer; transition:background .1s,border-color .1s; }
+        .pr-chip:hover { background:var(--bg-card-hover); border-color:var(--border-strong); }
+        .pr-chip-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; margin-top:3px; }
+        .pr-chip-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+        .pr-chip-header { display:flex; align-items:baseline; justify-content:space-between; gap:6px; }
+        .pr-chip-number { font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; color:var(--text-muted); }
+        .pr-chip-age { font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; flex-shrink:0; }
+        .pr-chip-title { font-size:12px; font-weight:500; color:var(--text-primary); line-height:1.35; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+        .pr-chip-meta { display:flex; align-items:center; gap:7px; margin-top:1px; }
+        .pr-chip-author { font-size:11px; color:var(--text-secondary); }
+        .pr-chip-sep { font-size:10px; color:var(--text-muted); }
+        .pr-chip-status { font-size:10px; font-weight:600; letter-spacing:.02em; }
       `}</style>
     </div>
   );

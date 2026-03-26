@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo } from "react";
 import useSWR from "swr";
 import { formatDistanceToNow } from "date-fns";
-import type { PrCardData, MyPrsResponse, TeammatePrsResponse, ReviewRequestsResponse } from "@/types/pr";
+import type { PrCardData, PrDetails, MyPrsResponse, TeammatePrsResponse, ReviewRequestsResponse } from "@/types/pr";
 import NavBar from "@/components/NavBar";
 import { fetcher } from "@/lib/fetcher";
 
@@ -54,19 +54,26 @@ interface Props { refreshIntervalMs: number; myLogin: string; repo: string; }
 export default function ZenView({ refreshIntervalMs, myLogin, repo }: Props) {
   const [hoveredPr, setHoveredPr] = useState<PrCardData | null>(null);
   const [paused, setPaused] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [syncKey, setSyncKey] = useState(0);
 
-  const { data: myPrs, isLoading: myLoad, mutate: mm } = useSWR<MyPrsResponse>("/api/my-prs", fetcher, { refreshInterval: refreshIntervalMs });
-  const { data: tmPrs, isLoading: tmLoad, mutate: mt } = useSWR<TeammatePrsResponse>("/api/teammate-prs", fetcher, { refreshInterval: refreshIntervalMs });
-  const { data: rvPrs, isLoading: rvLoad, mutate: mr } = useSWR<ReviewRequestsResponse>("/api/review-requests", fetcher, { refreshInterval: refreshIntervalMs });
-  const handleRefresh = useCallback(() => { mm(); mt(); mr(); }, [mm, mt, mr]);
+  const { data: myPrs, isLoading: myLoad, mutate: mm } = useSWR<MyPrsResponse>(`/api/my-prs?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
+  const { data: tmPrs, isLoading: tmLoad, mutate: mt } = useSWR<TeammatePrsResponse>(`/api/teammate-prs?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
+  const { data: rvPrs, isLoading: rvLoad, mutate: mr } = useSWR<ReviewRequestsResponse>(`/api/review-requests?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
+  const handleRefresh = useCallback(() => { setSyncKey(k => k + 1); mm(); mt(); mr(); }, [mm, mt, mr]);
 
   const isLoading = myLoad || tmLoad || rvLoad;
   const review = rvPrs?.reviewRequests ?? [];
   const myActive = myPrs?.active ?? [];
   const myDrafts = myPrs?.drafts ?? [];
   const team = Object.values(tmPrs?.byTeammate ?? {}).flat();
-  const items = buildItems(review, myActive, myDrafts, team);
+  const items = useMemo(() => buildItems(review, myActive, myDrafts, team), [review, myActive, myDrafts, team]);
+
+  // Batch-fetch details (non-blocking — zen view doesn't show details inline)
+  const allNumbers = useMemo(() => items.map(i => i.pr.number), [items]);
+  useSWR<Record<number, PrDetails>>(
+    allNumbers.length > 0 ? `/api/pr-details-batch?numbers=${allNumbers.join(",")}&v=${syncKey}` : null,
+    fetcher, { revalidateOnFocus: false, refreshInterval: 0 }
+  );
 
   const cx = 400, cy = 400;
   const size = 800;
@@ -77,7 +84,6 @@ export default function ZenView({ refreshIntervalMs, myLogin, repo }: Props) {
 
       <main
         id="main-content"
-        ref={containerRef}
         style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden", background: "var(--bg)", cursor: "default" }}
         onClick={() => setPaused(p => !p)}
       >

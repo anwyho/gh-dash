@@ -146,8 +146,8 @@ test("zen - SVG orbital rings render", async ({ page }) => {
   const svg = page.locator("svg").first();
   await expect(svg).toBeVisible();
 
-  // "HI" text should be in the center
-  const hiText = page.getByText("HI");
+  // SVG center should have hawaiian-ice label
+  const hiText = page.locator("svg text").filter({ hasText: "hawaiian-ice" }).first();
   await expect(hiText).toBeVisible();
 
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, "zen-orbital.png") });
