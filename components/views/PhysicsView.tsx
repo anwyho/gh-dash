@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import useSWR from "swr";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { differenceInDays, formatDistanceToNow } from "date-fns";
-import type { PrCardData, PrDetails, MyPrsResponse, TeammatePrsResponse, ReviewRequestsResponse } from "@/types/pr";
+import type { PrCardData, PrDetails } from "@/types/pr";
 import NavBar from "@/components/NavBar";
-import { fetcher } from "@/lib/fetcher";
+import { useDashboardData } from "@/lib/hooks/useDashboardData";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -128,29 +127,14 @@ export default function PhysicsView({ refreshIntervalMs, repo }: Props) {
   const [hovered, setHovered] = useState<HoverInfo | null>(null);
   const [initTrigger, setInitTrigger] = useState(0);
   const initialized = useRef(false);
-  const [syncKey, setSyncKey] = useState(0);
 
-  const { data: myPrs, isLoading: myLoad, mutate: mm } = useSWR<MyPrsResponse>(`/api/my-prs?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
-  const { data: tmPrs, isLoading: tmLoad, mutate: mt } = useSWR<TeammatePrsResponse>(`/api/teammate-prs?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
-  const { data: rvPrs, isLoading: rvLoad, mutate: mr } = useSWR<ReviewRequestsResponse>(`/api/review-requests?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
+  const { myPrs, tmPrs, rvPrs, detailsMap, isLoading, refresh: dataRefresh } = useDashboardData(refreshIntervalMs);
+
   const handleRefresh = useCallback(() => {
-    setSyncKey(k => k + 1); initialized.current = false; setInitTrigger(t => t + 1);
-    mm(); mt(); mr();
-  }, [mm, mt, mr]);
-
-  // Batch SWR for details — prefetch while physics loads
-  const allNumbers = useMemo(() => {
-    const nums: number[] = [];
-    myPrs?.active?.forEach(p => nums.push(p.number));
-    myPrs?.drafts?.forEach(p => nums.push(p.number));
-    tmPrs && Object.values(tmPrs.byTeammate).flat().forEach(p => nums.push(p.number));
-    rvPrs?.reviewRequests?.forEach(p => nums.push(p.number));
-    return [...new Set(nums)];
-  }, [myPrs, tmPrs, rvPrs]);
-  const { data: detailsMap } = useSWR<Record<number, PrDetails>>(
-    allNumbers.length > 0 ? `/api/pr-details-batch?numbers=${allNumbers.join(",")}&v=${syncKey}` : null,
-    fetcher, { revalidateOnFocus: false, refreshInterval: 0 }
-  );
+    initialized.current = false;
+    setInitTrigger(t => t + 1);
+    dataRefresh();
+  }, [dataRefresh]);
 
   // Track theme without polling getComputedStyle
   useEffect(() => {
@@ -302,7 +286,6 @@ export default function PhysicsView({ refreshIntervalMs, repo }: Props) {
     return () => { cancelAnimationFrame(rafRef.current); ro.disconnect(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const isLoading = myLoad || tmLoad || rvLoad;
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>

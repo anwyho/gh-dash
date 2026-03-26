@@ -25,74 +25,22 @@ export default function NavBar({ repo, onRefresh, isLoading, lastFetchedAt }: Pr
     : null;
 
   return (
-    <header
-      role="banner"
-      style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 100,
-        background: "var(--bg-overlay)",
-        backdropFilter: "blur(12px)",
-        borderBottom: "1px solid var(--border)",
-        padding: "0 20px",
-        display: "flex",
-        alignItems: "center",
-        height: 44,
-        gap: 0,
-      }}
-    >
-      {/* Brand */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          paddingRight: 20,
-          borderRight: "1px solid var(--border)",
-          marginRight: 20,
-          flexShrink: 0,
-        }}
-        aria-label="gh-dash"
-      >
-        <span
-          aria-hidden="true"
-          style={{
-            fontFamily: "JetBrains Mono, monospace",
-            fontSize: 12,
-            fontWeight: 700,
-            color: "var(--accent)",
-            letterSpacing: "0.02em",
-          }}
-        >
-          gh-dash
-        </span>
-        <span aria-hidden="true" style={{ fontSize: 11, color: "var(--text-muted)" }}>/</span>
+    <header role="banner" className="navbar">
+      <div className="navbar-brand">
+        <span className="navbar-logo" aria-hidden="true">gh-dash</span>
+        <span className="navbar-sep" aria-hidden="true">/</span>
         <a
           href={`https://github.com/${repo}`}
           target="_blank"
           rel="noopener noreferrer"
           aria-label={`Open ${repo} on GitHub (opens in new tab)`}
-          style={{
-            fontSize: 12,
-            fontWeight: 500,
-            color: "var(--text-secondary)",
-            textDecoration: "none",
-            transition: "color 0.1s",
-            borderRadius: 3,
-          }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLAnchorElement).style.color = "var(--text-primary)")
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLAnchorElement).style.color = "var(--text-secondary)")
-          }
+          className="navbar-repo"
         >
           {repoName}
         </a>
       </div>
 
-      {/* View switcher */}
-      <nav aria-label="Dashboard views" style={{ display: "flex", gap: 2, flex: 1 }}>
+      <nav aria-label="Dashboard views" className="navbar-nav">
         {VIEWS.map(({ href, label }) => {
           const active = pathname === href || (pathname === "/" && href === "/control");
           return (
@@ -100,25 +48,7 @@ export default function NavBar({ repo, onRefresh, isLoading, lastFetchedAt }: Pr
               key={href}
               href={href}
               aria-current={active ? "page" : undefined}
-              style={{
-                fontSize: 12,
-                fontWeight: active ? 600 : 400,
-                color: active ? "var(--text-primary)" : "var(--text-secondary)",
-                textDecoration: "none",
-                padding: "4px 10px",
-                borderRadius: 5,
-                background: active ? "var(--bg-card)" : "transparent",
-                border: active ? "1px solid var(--border)" : "1px solid transparent",
-                transition: "all 0.1s",
-              }}
-              onMouseEnter={(e) => {
-                if (!active)
-                  (e.currentTarget as HTMLAnchorElement).style.color = "var(--text-primary)";
-              }}
-              onMouseLeave={(e) => {
-                if (!active)
-                  (e.currentTarget as HTMLAnchorElement).style.color = "var(--text-secondary)";
-              }}
+              className={`navbar-link${active ? " navbar-link--active" : ""}`}
             >
               {label}
             </Link>
@@ -126,74 +56,40 @@ export default function NavBar({ repo, onRefresh, isLoading, lastFetchedAt }: Pr
         })}
       </nav>
 
-      {/* Right: sync status */}
-      <div
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        style={{ display: "flex", alignItems: "center", gap: 12 }}
-      >
+      <div role="status" aria-live="polite" aria-atomic="true" className="navbar-right">
         {timeLabel && (
-          <time
-            dateTime={lastFetchedAt}
-            aria-label={`Last synced at ${timeLabel}`}
-            style={{
-              fontSize: 11,
-              color: "var(--text-muted)",
-              fontFamily: "JetBrains Mono, monospace",
-            }}
-          >
+          <time dateTime={lastFetchedAt} aria-label={`Last synced at ${timeLabel}`} className="navbar-time">
             {timeLabel}
           </time>
         )}
-
         {isLoading ? (
-          <div
-            role="status"
-            aria-label="Syncing data…"
-            style={{
-              width: 14,
-              height: 14,
-              borderRadius: "50%",
-              border: "2px solid var(--border-strong)",
-              borderTopColor: "var(--accent)",
-              animation: "spin 0.7s linear infinite",
-            }}
-          />
+          <div role="status" aria-label="Syncing…" className="navbar-spinner" />
         ) : (
           onRefresh && (
-            <button
-              type="button"
-              onClick={onRefresh}
-              aria-label="Sync dashboard data"
-              style={{
-                background: "transparent",
-                border: "1px solid var(--border)",
-                borderRadius: 5,
-                color: "var(--text-secondary)",
-                cursor: "pointer",
-                fontSize: 11,
-                fontFamily: "inherit",
-                fontWeight: 500,
-                padding: "3px 9px",
-                transition: "all 0.1s",
-              }}
-              onMouseEnter={(e) => {
-                const b = e.currentTarget as HTMLButtonElement;
-                b.style.borderColor = "var(--border-strong)";
-                b.style.color = "var(--text-primary)";
-              }}
-              onMouseLeave={(e) => {
-                const b = e.currentTarget as HTMLButtonElement;
-                b.style.borderColor = "var(--border)";
-                b.style.color = "var(--text-secondary)";
-              }}
-            >
+            <button type="button" onClick={onRefresh} aria-label="Sync dashboard data" className="navbar-sync">
               Sync
             </button>
           )
         )}
       </div>
+
+      <style>{`
+        .navbar { position:sticky; top:0; z-index:100; background:var(--bg-overlay); backdrop-filter:blur(12px); border-bottom:1px solid var(--border); padding:0 20px; display:flex; align-items:center; height:44px; gap:0; }
+        .navbar-brand { display:flex; align-items:center; gap:8px; padding-right:20px; border-right:1px solid var(--border); margin-right:20px; flex-shrink:0; }
+        .navbar-logo { font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:700; color:var(--accent); letter-spacing:.02em; }
+        .navbar-sep { font-size:11px; color:var(--text-muted); }
+        .navbar-repo { font-size:12px; font-weight:500; color:var(--text-secondary); text-decoration:none; border-radius:3px; transition:color .1s; }
+        .navbar-repo:hover { color:var(--text-primary); }
+        .navbar-nav { display:flex; gap:2px; flex:1; }
+        .navbar-link { font-size:12px; font-weight:400; color:var(--text-secondary); text-decoration:none; padding:4px 10px; border-radius:5px; background:transparent; border:1px solid transparent; transition:color .1s; }
+        .navbar-link:hover { color:var(--text-primary); }
+        .navbar-link--active { font-weight:600; color:var(--text-primary); background:var(--bg-card); border-color:var(--border); }
+        .navbar-right { display:flex; align-items:center; gap:12px; }
+        .navbar-time { font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono',monospace; }
+        .navbar-spinner { width:14px; height:14px; border-radius:50%; border:2px solid var(--border-strong); border-top-color:var(--accent); animation:spin .7s linear infinite; }
+        .navbar-sync { background:transparent; border:1px solid var(--border); border-radius:5px; color:var(--text-secondary); cursor:pointer; font-size:11px; font-family:inherit; font-weight:500; padding:3px 9px; transition:color .1s,border-color .1s; }
+        .navbar-sync:hover { border-color:var(--border-strong); color:var(--text-primary); }
+      `}</style>
     </header>
   );
 }

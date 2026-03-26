@@ -18,3 +18,10 @@ export function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Pro
     return value;
   });
 }
+
+/** Called by POST /api/cache/clear on manual Sync — busts pr-details entries only. */
+export function clearPrDetailsCache(): void {
+  for (const key of store.keys()) {
+    if (key.startsWith("pr-details:")) store.delete(key);
+  }
+}

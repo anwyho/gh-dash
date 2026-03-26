@@ -1,14 +1,10 @@
 "use client";
 
-import useSWR from "swr";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { formatDistanceToNow, differenceInDays } from "date-fns";
-import type {
-  PrCardData, PrDetails,
-  MyPrsResponse, TeammatePrsResponse, ReviewRequestsResponse,
-} from "@/types/pr";
+import type { PrCardData, PrDetails } from "@/types/pr";
 import NavBar from "@/components/NavBar";
-import { fetcher } from "@/lib/fetcher";
+import { useDashboardData } from "@/lib/hooks/useDashboardData";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -168,41 +164,8 @@ function Section({ title, badge, children }: { title: string; badge?: string; ch
 interface Props { refreshIntervalMs: number; myLogin: string; repo: string; }
 
 export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props) {
-  const [syncKey, setSyncKey] = useState(0);
+  const { myPrs, tmPrs, rvPrs, detailsMap, isLoading, refresh } = useDashboardData(refreshIntervalMs);
 
-  const { data: myPrs, isLoading: myLoad, mutate: mm } =
-    useSWR<MyPrsResponse>(`/api/my-prs?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
-  const { data: tmPrs, isLoading: tmLoad, mutate: mt } =
-    useSWR<TeammatePrsResponse>(`/api/teammate-prs?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
-  const { data: rvPrs, isLoading: rvLoad, mutate: mr } =
-    useSWR<ReviewRequestsResponse>(`/api/review-requests?v=${syncKey}`, fetcher, { refreshInterval: refreshIntervalMs });
-
-  // Collect all PR numbers across all sections
-  const allNumbers = useMemo(() => {
-    const nums: number[] = [];
-    myPrs?.drafts?.forEach(p => nums.push(p.number));
-    myPrs?.active?.forEach(p => nums.push(p.number));
-    myPrs?.recentlyClosed?.forEach(p => nums.push(p.number));
-    rvPrs?.reviewRequests?.forEach(p => nums.push(p.number));
-    tmPrs && Object.values(tmPrs.byTeammate).flat().forEach(p => nums.push(p.number));
-    return [...new Set(nums)];
-  }, [myPrs, tmPrs, rvPrs]);
-
-  // Single batch SWR for all PR details — only fetches when we have PR numbers
-  const batchKey = allNumbers.length > 0
-    ? `/api/pr-details-batch?numbers=${allNumbers.join(",")}&v=${syncKey}`
-    : null;
-  const { data: detailsMap } = useSWR<Record<number, PrDetails>>(
-    batchKey, fetcher,
-    { revalidateOnFocus: false, refreshInterval: 0 }
-  );
-
-  const handleRefresh = useCallback(() => {
-    setSyncKey(k => k + 1);
-    mm(); mt(); mr();
-  }, [mm, mt, mr]);
-
-  const isLoading = myLoad || tmLoad || rvLoad;
   const tmTotal = tmPrs
     ? Object.values(tmPrs.byTeammate).reduce((n, ps) => n + ps.length, 0)
     : 0;
@@ -216,7 +179,7 @@ export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props
 
   return (
     <div className="view-root">
-      <NavBar repo={repo} onRefresh={handleRefresh} isLoading={isLoading} lastFetchedAt={myPrs?.lastFetchedAt} />
+      <NavBar repo={repo} onRefresh={refresh} isLoading={isLoading} lastFetchedAt={myPrs?.lastFetchedAt} />
       <main id="main-content" className="control-main">
 
         <Section title="Review queue" badge={reviewQueue ? String(reviewQueue.length) : undefined}>
@@ -225,7 +188,7 @@ export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props
             sublabel="oldest → most urgent"
             prs={reviewQueue}
             detailsMap={detailsMap}
-            isLoading={rvLoad}
+            isLoading={isLoading}
             showUrgency
             emptyMsg="Inbox zero"
             labelColor={reviewQueue?.length ? "var(--danger)" : undefined}
@@ -235,15 +198,15 @@ export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props
         <div className="section-gap" />
 
         <Section title={`@${myLogin}`}>
-          <Lane label="Active" prs={myPrs?.active} detailsMap={detailsMap} isLoading={myLoad} emptyMsg="No active PRs" labelColor="var(--success)" />
-          <Lane label="Draft" prs={myPrs?.drafts} detailsMap={detailsMap} isLoading={myLoad} emptyMsg="No drafts" />
-          <Lane label="Recently closed" prs={myPrs?.recentlyClosed} detailsMap={detailsMap} isLoading={myLoad} emptyMsg="—" />
+          <Lane label="Active" prs={myPrs?.active} detailsMap={detailsMap} isLoading={isLoading} emptyMsg="No active PRs" labelColor="var(--success)" />
+          <Lane label="Draft" prs={myPrs?.drafts} detailsMap={detailsMap} isLoading={isLoading} emptyMsg="No drafts" />
+          <Lane label="Recently closed" prs={myPrs?.recentlyClosed} detailsMap={detailsMap} isLoading={isLoading} emptyMsg="—" />
         </Section>
 
         <div className="section-gap" />
 
         <Section title="Team" badge={tmTotal ? String(tmTotal) : undefined}>
-          {tmLoad
+          {isLoading
             ? [1, 2].map(i => <Lane key={i} label="…" isLoading emptyMsg="" />)
             : tmPrs && Object.entries(tmPrs.byTeammate).map(([login, prs]) => (
                 <Lane key={login} label={`@${login}`} prs={prs} detailsMap={detailsMap} isLoading={false} emptyMsg="—" />
