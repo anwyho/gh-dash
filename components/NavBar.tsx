@@ -2,6 +2,13 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
+import { useTheme, type ThemePreference } from "@/lib/hooks/useTheme";
+
+const THEME_OPTIONS: { value: ThemePreference; label: string; title: string }[] = [
+  { value: "light", label: "☀", title: "Light mode" },
+  { value: "system", label: "◑", title: "System preference" },
+  { value: "dark", label: "☾", title: "Dark mode" },
+];
 
 const VIEWS = [
   { href: "/control", label: "Control" },
@@ -18,6 +25,7 @@ interface Props {
 
 export default function NavBar({ repo, onRefresh, isLoading, lastFetchedAt }: Props) {
   const pathname = usePathname();
+  const { theme, setTheme } = useTheme();
   const [, repoName] = repo.split("/");
 
   const timeLabel = lastFetchedAt
@@ -62,6 +70,23 @@ export default function NavBar({ repo, onRefresh, isLoading, lastFetchedAt }: Pr
             {timeLabel}
           </time>
         )}
+
+        {/* Theme toggle */}
+        <div className="theme-toggle" role="group" aria-label="Color theme">
+          {THEME_OPTIONS.map(({ value, label, title }) => (
+            <button
+              key={value}
+              type="button"
+              title={title}
+              aria-pressed={theme === value}
+              className={`theme-btn${theme === value ? " theme-btn--active" : ""}`}
+              onClick={() => setTheme(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         {isLoading ? (
           <div role="status" aria-label="Syncing…" className="navbar-spinner" />
         ) : (
@@ -84,7 +109,11 @@ export default function NavBar({ repo, onRefresh, isLoading, lastFetchedAt }: Pr
         .navbar-link { font-size:12px; font-weight:400; color:var(--text-secondary); text-decoration:none; padding:4px 10px; border-radius:5px; background:transparent; border:1px solid transparent; transition:color .1s; }
         .navbar-link:hover { color:var(--text-primary); }
         .navbar-link--active { font-weight:600; color:var(--text-primary); background:var(--bg-card); border-color:var(--border); }
-        .navbar-right { display:flex; align-items:center; gap:12px; }
+        .navbar-right { display:flex; align-items:center; gap:10px; }
+        .theme-toggle { display:flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+        .theme-btn { background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:12px; padding:3px 7px; transition:background .1s,color .1s; line-height:1; }
+        .theme-btn:hover { color:var(--text-primary); background:var(--bg-card-hover); }
+        .theme-btn--active { background:var(--bg-card); color:var(--text-primary); }
         .navbar-time { font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono',monospace; }
         .navbar-spinner { width:14px; height:14px; border-radius:50%; border:2px solid var(--border-strong); border-top-color:var(--accent); animation:spin .7s linear infinite; }
         .navbar-sync { background:transparent; border:1px solid var(--border); border-radius:5px; color:var(--text-secondary); cursor:pointer; font-size:11px; font-family:inherit; font-weight:500; padding:3px 9px; transition:color .1s,border-color .1s; }

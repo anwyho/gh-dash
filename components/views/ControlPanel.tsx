@@ -211,25 +211,31 @@ function PrChip({ pr, showUrgency, details, onHover, onHoverEnd, onHide }: PrChi
         onMouseEnter={handleMouseEnter}
         onMouseLeave={onHoverEnd}
       >
-        <div aria-hidden="true" className="pr-chip-dot" style={{ background: dotColor }} />
         <div className="pr-chip-body">
+          {/* Row 1: number + state dot + age + CI/review */}
           <div className="pr-chip-header">
             <span className="pr-chip-number">#{pr.number}</span>
+            <div aria-hidden="true" className="pr-chip-dot" style={{ background: dotColor }} />
             {age && <span className="pr-chip-age" style={{ color: dotColor }}>{age}</span>}
+            <span className="pr-chip-header-right">
+              {reviewLabel && <span className="pr-chip-status" style={{ color: reviewColor }}>{reviewLabel}</span>}
+              {ciLabel && <span className="pr-chip-status" style={{ color: ciColor }}>{ciLabel}</span>}
+            </span>
           </div>
+          {/* Row 2: title (clamped to 1 line) */}
           <span className="pr-chip-title">{pr.title}</span>
+          {/* Row 3: author + diff stats */}
           <div className="pr-chip-meta">
             <span className="pr-chip-author">{pr.author.login}</span>
-            {reviewLabel && (
+            {details && details.changedFiles > 0 && (
               <>
                 <span aria-hidden="true" className="pr-chip-sep">·</span>
-                <span className="pr-chip-status" style={{ color: reviewColor }}>{reviewLabel}</span>
-              </>
-            )}
-            {ciLabel && (
-              <>
-                <span aria-hidden="true" className="pr-chip-sep">·</span>
-                <span className="pr-chip-status" style={{ color: ciColor }}>{ciLabel}</span>
+                <span className="pr-chip-diff">
+                  <span style={{ color: "var(--add-color)" }}>+{details.additions}</span>
+                  <span style={{ color: "var(--text-muted)" }}>/</span>
+                  <span style={{ color: "var(--del-color)" }}>−{details.deletions}</span>
+                  <span style={{ color: "var(--text-muted)" }}> {details.changedFiles}f</span>
+                </span>
               </>
             )}
           </div>
@@ -522,18 +528,21 @@ export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props
         .pr-chip-wrap:hover .pr-chip-hide { opacity:1; }
         .pr-chip-hide:hover { color:var(--danger); }
 
-        .pr-chip { display:flex; gap:9px; padding:9px 11px; background:var(--bg-card); border:1px solid var(--border); border-radius:7px; width:240px; text-decoration:none; cursor:pointer; transition:background .1s,border-color .1s; }
+        /* Uniform-height chip: fixed 72px, all rows visible */
+        .pr-chip { display:flex; gap:0; padding:8px 10px; background:var(--bg-card); border:1px solid var(--border); border-radius:6px; width:240px; height:72px; text-decoration:none; cursor:pointer; transition:background .1s,border-color .1s; overflow:hidden; }
         .pr-chip:hover { background:var(--bg-card-hover); border-color:var(--border-strong); }
-        .pr-chip-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; margin-top:3px; }
-        .pr-chip-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
-        .pr-chip-header { display:flex; align-items:baseline; justify-content:space-between; gap:6px; }
-        .pr-chip-number { font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; color:var(--text-muted); }
-        .pr-chip-age { font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; flex-shrink:0; }
-        .pr-chip-title { font-size:12px; font-weight:500; color:var(--text-primary); line-height:1.4; word-break:break-word; }
-        .pr-chip-meta { display:flex; align-items:center; flex-wrap:wrap; gap:5px; margin-top:2px; }
-        .pr-chip-author { font-size:11px; color:var(--text-secondary); }
+        .pr-chip-body { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:space-between; }
+        .pr-chip-header { display:flex; align-items:center; gap:5px; }
+        .pr-chip-number { font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; color:var(--text-muted); flex-shrink:0; }
+        .pr-chip-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+        .pr-chip-age { font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; flex-shrink:0; }
+        .pr-chip-header-right { display:flex; align-items:center; gap:5px; margin-left:auto; }
+        .pr-chip-title { font-size:11.5px; font-weight:500; color:var(--text-primary); line-height:1.35; overflow:hidden; display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; }
+        .pr-chip-meta { display:flex; align-items:center; gap:5px; }
+        .pr-chip-author { font-size:10px; color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px; }
+        .pr-chip-diff { font-family:'JetBrains Mono',monospace; font-size:9.5px; display:flex; gap:1px; }
         .pr-chip-sep { font-size:10px; color:var(--text-muted); }
-        .pr-chip-status { font-size:10px; font-weight:600; letter-spacing:.02em; }
+        .pr-chip-status { font-size:9.5px; font-weight:600; white-space:nowrap; }
 
         /* Popover */
         .popover { position:fixed; z-index:1000; background:var(--bg-card); border:1px solid var(--border-strong); border-radius:10px; padding:14px 16px; box-shadow:0 8px 32px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.04); pointer-events:auto; }

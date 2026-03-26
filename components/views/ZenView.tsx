@@ -23,26 +23,37 @@ interface OrbitItem {
   speedMs: number;
 }
 
+// Ring layout: teammates inner, my PRs middle, review requests outer
+// scale multiplies all radii (adjustable by user)
 function buildItems(
-  review: PrCardData[], myActive: PrCardData[], myDrafts: PrCardData[], team: PrCardData[]
+  review: PrCardData[], myActive: PrCardData[], myDrafts: PrCardData[], team: PrCardData[],
+  scale: number
 ): OrbitItem[] {
   const items: OrbitItem[] = [];
-  const spread = (arr: PrCardData[]) => arr.map((pr, i) => (i / Math.max(arr.length, 1)) * 360);
+  const spread = (arr: PrCardData[]) => arr.map((_, i) => (i / Math.max(arr.length, 1)) * 360);
 
-  spread(review).forEach((deg, i) => items.push({
-    pr: review[i], offsetDeg: deg, orbitR: 110, dotR: 8,
-    color: "#6366f1", ring: "inner", speedMs: 18000,
+  // Inner: teammates — closest to center, fastest
+  spread(team).forEach((deg, i) => items.push({
+    pr: team[i], offsetDeg: deg,
+    orbitR: Math.round(100 * scale), dotR: 7,
+    color: STATE_COLOR[team[i].state] ?? "#636c76",
+    ring: "inner", speedMs: 20000,
   }));
 
+  // Middle: my PRs
   const myAll = [...myActive, ...myDrafts];
   spread(myAll).forEach((deg, i) => items.push({
-    pr: myAll[i], offsetDeg: deg, orbitR: 200, dotR: 6,
-    color: STATE_COLOR[myAll[i].state] ?? "#52525b", ring: "mid", speedMs: 30000,
+    pr: myAll[i], offsetDeg: deg,
+    orbitR: Math.round(190 * scale), dotR: 8,
+    color: STATE_COLOR[myAll[i].state] ?? "#636c76",
+    ring: "mid", speedMs: 32000,
   }));
 
-  spread(team).forEach((deg, i) => items.push({
-    pr: team[i], offsetDeg: deg, orbitR: 305, dotR: 4.5,
-    color: STATE_COLOR[team[i].state] ?? "#52525b", ring: "outer", speedMs: 55000,
+  // Outer: review requests — outermost, prominent amber
+  spread(review).forEach((deg, i) => items.push({
+    pr: review[i], offsetDeg: deg,
+    orbitR: Math.round(295 * scale), dotR: 10,
+    color: "#d29922", ring: "outer", speedMs: 50000,
   }));
 
   return items;
@@ -53,16 +64,22 @@ interface Props { refreshIntervalMs: number; myLogin: string; repo: string; }
 export default function ZenView({ refreshIntervalMs, myLogin, repo }: Props) {
   const [hoveredPr, setHoveredPr] = useState<PrCardData | null>(null);
   const [paused, setPaused] = useState(false);
+  const [scale, setScale] = useState(1.0);
   const { myPrs, tmPrs, rvPrs, detailsMap, isLoading, refresh } = useDashboardData(refreshIntervalMs);
 
   const review = rvPrs?.reviewRequests ?? [];
   const myActive = myPrs?.active ?? [];
   const myDrafts = myPrs?.drafts ?? [];
   const team = Object.values(tmPrs?.byTeammate ?? {}).flat();
-  const items = useMemo(() => buildItems(review, myActive, myDrafts, team), [review, myActive, myDrafts, team]);
+  const items = useMemo(
+    () => buildItems(review, myActive, myDrafts, team, scale),
+    [review, myActive, myDrafts, team, scale]
+  );
 
   const cx = 400, cy = 400;
   const size = 800;
+  // Ring radii (for hitboxes and labels) — match buildItems
+  const ringR = { inner: Math.round(100 * scale), mid: Math.round(190 * scale), outer: Math.round(295 * scale) };
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -95,27 +112,38 @@ export default function ZenView({ refreshIntervalMs, myLogin, repo }: Props) {
           {/* Ambient center glow */}
           <circle cx={cx} cy={cy} r={80} fill="url(#center-grad)" />
 
-          {/* Orbit rings */}
+          {/* Orbit rings — visual + wide transparent hitbox for pause-on-hover */}
           {([
-            { r: 110, dash: "3 7", opacity: 0.25 },
-            { r: 200, dash: "none", opacity: 0.18 },
-            { r: 305, dash: "2 10", opacity: 0.12 },
-          ] as { r: number; dash: string; opacity: number }[]).map(({ r, dash, opacity }) => (
-            <circle key={r} cx={cx} cy={cy} r={r}
-              fill="none" stroke={`rgba(255,255,255,${opacity})`} strokeWidth={1}
-              strokeDasharray={dash === "none" ? undefined : dash}
-            />
+            { r: ringR.inner, dash: "3 7", opacity: 0.3, label: `team ${team.length}`, labelColor: "rgba(100,180,120,0.7)" },
+            { r: ringR.mid, dash: "none", opacity: 0.22, label: `@${myLogin} ${myActive.length + myDrafts.length}`, labelColor: "rgba(130,170,255,0.6)" },
+            { r: ringR.outer, dash: "2 10", opacity: 0.15, label: `review ${review.length}`, labelColor: "rgba(210,153,34,0.8)" },
+          ]).map(({ r, dash, opacity, label, labelColor }) => (
+            <g key={r}>
+              {/* Visual ring */}
+              <circle cx={cx} cy={cy} r={r}
+                fill="none" stroke={`rgba(139,148,158,${opacity})`} strokeWidth={1}
+                strokeDasharray={dash === "none" ? undefined : dash}
+              />
+              {/* Wide invisible hitbox — hovering the ring pauses all animation */}
+              <circle cx={cx} cy={cy} r={r}
+                fill="none" stroke="transparent" strokeWidth={24}
+                style={{ cursor: "default" }}
+                onMouseEnter={() => setPaused(true)}
+                onMouseLeave={() => setPaused(false)}
+              />
+              {/* Ring label */}
+              <text x={cx + r + 6} y={cy - 4} fill={labelColor}
+                fontSize="9" fontFamily="Manrope, sans-serif" fontWeight="600"
+              >{label}</text>
+            </g>
           ))}
 
           {/* Center hub */}
           <circle cx={cx} cy={cy} r={40} fill="var(--bg-card)" stroke="rgba(255,255,255,0.1)" strokeWidth={1} filter="url(#glow-soft)" />
-          <text x={cx} y={cy - 6} textAnchor="middle" fill="#6366f1" fontSize="11" fontFamily="JetBrains Mono, monospace" fontWeight="700" letterSpacing="2">HI</text>
-          <text x={cx} y={cy + 10} textAnchor="middle" fill="rgba(135,135,160,0.6)" fontSize="8" fontFamily="Manrope, sans-serif" fontWeight="500">hawaiian-ice</text>
+          <text x={cx} y={cy - 6} textAnchor="middle" fill="var(--accent)" fontSize="13" fontFamily="'JetBrains Mono', monospace" fontWeight="700" letterSpacing="3">HI</text>
+          <text x={cx} y={cy + 10} textAnchor="middle" fill="var(--text-secondary)" fontSize="9" fontFamily="Manrope, sans-serif" fontWeight="500">hawaiian-ice</text>
 
-          {/* Ring labels */}
-          <text x={cx + 116} y={cy - 6} fill="rgba(99,102,241,0.5)" fontSize="8" fontFamily="Manrope, sans-serif" fontWeight="600">review {review.length}</text>
-          <text x={cx + 206} y={cy - 6} fill="rgba(135,135,160,0.4)" fontSize="8" fontFamily="Manrope, sans-serif" fontWeight="500">@{myLogin} {myActive.length + myDrafts.length}</text>
-          <text x={cx + 311} y={cy - 6} fill="rgba(135,135,160,0.3)" fontSize="8" fontFamily="Manrope, sans-serif" fontWeight="500">team {team.length}</text>
+          {/* Center hub labels */}
 
           {/* Orbiting dots */}
           {items.map((item) => {
@@ -257,11 +285,29 @@ export default function ZenView({ refreshIntervalMs, myLogin, repo }: Props) {
         )}
 
         {/* Status hint */}
+        {/* Ring size controls */}
+        <div style={{ position: "absolute", bottom: 20, right: 24, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 10, color: "var(--text-muted)" }}>rings</span>
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); setScale(s => Math.max(0.4, parseFloat((s - 0.1).toFixed(1)))); }}
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-secondary)", cursor: "pointer", fontSize: 13, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center" }}
+            aria-label="Shrink orbital rings"
+          >−</button>
+          <span style={{ fontSize: 10, fontFamily: "'JetBrains Mono',monospace", color: "var(--text-muted)", minWidth: 28, textAlign: "center" }}>{Math.round(scale * 100)}%</span>
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); setScale(s => Math.min(2.0, parseFloat((s + 0.1).toFixed(1)))); }}
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-secondary)", cursor: "pointer", fontSize: 13, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center" }}
+            aria-label="Grow orbital rings"
+          >+</button>
+        </div>
+
         <p
           aria-live="polite"
-          style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", fontSize: 11, color: "var(--text-muted)", letterSpacing: "0.02em", pointerEvents: "none", whiteSpace: "nowrap" }}
+          style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)", fontSize: 11, color: "var(--text-muted)", letterSpacing: "0.02em", pointerEvents: "none", whiteSpace: "nowrap" }}
         >
-          {paused ? "Click to resume" : "Hover to inspect · Click to pause"}
+          {paused ? "Click anywhere to resume" : "Hover ring or dot to pause · Click dot to open"}
         </p>
 
         {/* Screen-reader accessible PR list (visually hidden) */}

@@ -33,6 +33,9 @@ export interface PrDetails {
   reviewState: ReviewState;
   ciState: CiState;
   body: string | null;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
 }
 
 export interface MyPrsResponse {

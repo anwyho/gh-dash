@@ -17,7 +17,13 @@ async function fetchOnePr(repo: string, prNumber: number): Promise<PrDetails> {
       ghFetch(`repos/${repo}/pulls/${prNumber}/reviews`),
     ]);
 
-    const pr = prData as { head: { sha: string }; body: string | null };
+    const pr = prData as {
+      head: { sha: string };
+      body: string | null;
+      additions: number;
+      deletions: number;
+      changed_files: number;
+    };
     if (!/^[0-9a-f]{40}$/i.test(pr.head.sha)) throw new Error("Invalid SHA");
 
     const checkRunsData = await ghFetch(
@@ -28,6 +34,9 @@ async function fetchOnePr(repo: string, prNumber: number): Promise<PrDetails> {
       reviewState: computeReviewState(reviewsData as Parameters<typeof computeReviewState>[0]),
       ciState: computeCiState(checkRunsData as Parameters<typeof computeCiState>[0]),
       body: pr.body ?? null,
+      additions: pr.additions,
+      deletions: pr.deletions,
+      changedFiles: pr.changed_files,
     };
   });
 }
