@@ -23,6 +23,8 @@ async function fetchOnePr(repo: string, prNumber: number): Promise<PrDetails> {
       additions: number;
       deletions: number;
       changed_files: number;
+      comments: number;
+      review_comments: number;
     };
     if (!/^[0-9a-f]{40}$/i.test(pr.head.sha)) throw new Error("Invalid SHA");
 
@@ -37,6 +39,8 @@ async function fetchOnePr(repo: string, prNumber: number): Promise<PrDetails> {
       additions: pr.additions,
       deletions: pr.deletions,
       changedFiles: pr.changed_files,
+      commentCount: pr.comments,
+      reviewComments: pr.review_comments,
     };
   });
 }

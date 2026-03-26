@@ -21,24 +21,43 @@ function ageLabel(createdAt: string) {
   if (d === 1) return "1d";
   return `${d}d`;
 }
+function isStale(pr: PrCardData) {
+  return (pr.state === "open" || pr.state === "draft") &&
+    differenceInDays(new Date(), new Date(pr.updatedAt)) >= 3;
+}
 
 const STATE_COLOR: Record<string, string> = {
-  draft:  "var(--state-draft)",
-  open:   "var(--state-open)",
-  merged: "var(--state-merged)",
-  closed: "var(--state-closed)",
+  draft: "var(--state-draft)", open: "var(--state-open)",
+  merged: "var(--state-merged)", closed: "var(--state-closed)",
 };
+
+/** Extract dependency PR numbers from body text */
+function parseDeps(body: string | null | undefined): number[] {
+  if (!body) return [];
+  const pattern = /(?:blocked?\s+by|depends?\s+on|requires?|supersedes?|closes?)\s+#(\d+)/gi;
+  const nums = new Set<number>();
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(body)) !== null) nums.add(parseInt(m[1], 10));
+  return [...nums];
+}
 
 function cleanBody(body: string | null | undefined): string {
   if (!body) return "";
-  return body
-    .replace(/<!--[\s\S]*?-->/g, "")   // strip HTML comments
-    .replace(/^#{1,6}\s+/gm, "")       // strip markdown headings
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // flatten links
-    .trim();
+  return body.replace(/<!--[\s\S]*?-->/g, "").replace(/^#{1,6}\s+/gm, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").trim();
 }
 
-// ── localStorage hooks ────────────────────────────────────────────────────────
+/** Fuzzy-ish search: all words must appear somewhere in the haystack */
+function matchesSearch(pr: PrCardData, q: string): boolean {
+  if (!q) return true;
+  const hay = [
+    pr.title, pr.author.login, String(pr.number),
+    ...pr.labels.map(l => l.name),
+  ].join(" ").toLowerCase();
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w));
+}
+
+// ── localStorage set hook ─────────────────────────────────────────────────────
 
 function useLocalSet(key: string) {
   const [set, setSet] = useState<Set<number>>(() => {
@@ -54,9 +73,7 @@ function useLocalSet(key: string) {
     const next = new Set(prev); next.delete(n);
     localStorage.setItem(key, JSON.stringify([...next])); return next;
   }), [key]);
-  const clear = useCallback(() => {
-    setSet(new Set()); localStorage.removeItem(key);
-  }, [key]);
+  const clear = useCallback(() => { setSet(new Set()); localStorage.removeItem(key); }, [key]);
   return { set, add, remove, clear };
 }
 
@@ -66,12 +83,19 @@ interface PopoverInfo { pr: PrCardData; details: PrDetails | undefined; rect: DO
 
 function Popover({ info }: { info: PopoverInfo }) {
   const { pr, details, rect } = info;
-  const W = 340, PAD = 10;
-  const top = rect.bottom + PAD + 400 > (typeof window !== "undefined" ? window.innerHeight : 900)
-    ? Math.max(PAD, rect.top - 400 - PAD) : rect.bottom + PAD;
-  const left = Math.min(rect.left, (typeof window !== "undefined" ? window.innerWidth : 1440) - W - PAD);
+  const W = 340, PAD = 12;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1440;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 900;
+  const top = rect.bottom + PAD + 420 > vh ? Math.max(PAD, rect.top - 420 - PAD) : rect.bottom + PAD;
+  const left = Math.min(rect.left, vw - W - PAD);
+  const body = cleanBody(details?.body);
+  const deps = parseDeps(details?.body);
 
-  const body = cleanBody(pr.title && details?.body !== undefined ? details?.body : undefined);
+  const reviewColor = details?.reviewState === "approved" ? "var(--review-approved)"
+    : details?.reviewState === "changes_requested" ? "var(--review-changes)" : "var(--text-muted)";
+  const ciColor = details?.ciState === "success" ? "var(--ci-success)"
+    : details?.ciState === "failure" ? "var(--ci-failure)"
+    : details?.ciState === "pending" ? "var(--ci-pending)" : "var(--text-muted)";
 
   return (
     <div className="popover" style={{ top, left, width: W }} role="tooltip">
@@ -91,59 +115,71 @@ function Popover({ info }: { info: PopoverInfo }) {
           ...(details ? [
             ["Review", details.reviewState.replace("_", " ")],
             ["CI", details.ciState],
-            ["Changes", `+${details.additions} −${details.deletions} · ${details.changedFiles} files`],
+            ["Changes", `+${details.additions} / −${details.deletions} · ${details.changedFiles} files`],
+            ...(details.reviewComments > 0 || details.commentCount > 0
+              ? [[
+                  "Comments",
+                  [
+                    details.reviewComments > 0 && `${details.reviewComments} review`,
+                    details.commentCount > 0 && `${details.commentCount} general`,
+                  ].filter(Boolean).join(" · "),
+                ]]
+              : []),
           ] : []),
         ].map(([l, v]) => (
           <div key={l} className="popover-row">
             <span className="popover-row-label">{l}</span>
-            <span className="popover-row-value">{v}</span>
+            <span className="popover-row-value" style={{
+              color: l === "Review" ? reviewColor : l === "CI" ? ciColor : undefined,
+            }}>{v}</span>
           </div>
         ))}
       </div>
-      {details?.body && (
-        <p className="popover-body">{cleanBody(details.body)}</p>
+      {deps.length > 0 && (
+        <div className="popover-deps">
+          <span className="popover-deps-label">Deps</span>
+          {deps.map(n => (
+            <a key={n} className="popover-dep-pill" href={`https://github.com/${pr.htmlUrl.split("/").slice(3, 5).join("/")}/pull/${n}`} target="_blank" rel="noopener noreferrer">#{n}</a>
+          ))}
+        </div>
       )}
+      {body && <p className="popover-body">{body}</p>}
       <p className="popover-hint">Click to open on GitHub →</p>
     </div>
   );
 }
 
-// ── Card (fixed height, uniform) ──────────────────────────────────────────────
-
-const CARD_H = 148; // px — every card is this height
+// ── Card ──────────────────────────────────────────────────────────────────────
 
 interface CardProps {
   pr: PrCardData;
   details?: PrDetails;
   showUrgency?: boolean;
   starred: boolean;
-  hidden: boolean;
+  focused: boolean;
   onHover: (info: PopoverInfo) => void;
   onHoverEnd: () => void;
   onStar: (n: number) => void;
   onHide: (n: number) => void;
+  cardRef?: (el: HTMLElement | null) => void;
 }
 
-function PrCard({ pr, details, showUrgency, starred, onHover, onHoverEnd, onStar, onHide }: CardProps) {
+function PrCard({ pr, details, showUrgency, starred, focused, onHover, onHoverEnd, onStar, onHide, cardRef }: CardProps) {
   const ref = useRef<HTMLAnchorElement>(null);
   const dotColor = showUrgency ? ageColor(pr.createdAt) : STATE_COLOR[pr.state];
   const age = showUrgency ? ageLabel(pr.createdAt) : null;
+  const stale = isStale(pr);
+  const deps = parseDeps(details?.body);
 
-  const reviewLabel =
-    details?.reviewState === "approved" ? "✓" :
-    details?.reviewState === "changes_requested" ? "✗" : null;
-  const reviewColor =
-    details?.reviewState === "approved" ? "var(--review-approved)" : "var(--review-changes)";
-  const ciLabel =
-    details?.ciState === "success" ? "◆" :
-    details?.ciState === "failure" ? "◆" :
-    details?.ciState === "pending" ? "◇" : null;
-  const ciColor =
-    details?.ciState === "success" ? "var(--ci-success)" :
-    details?.ciState === "failure" ? "var(--ci-failure)" :
-    "var(--ci-pending)";
-
-  const body = cleanBody(details?.body);
+  const reviewLabel = details?.reviewState === "approved" ? "✓ apr"
+    : details?.reviewState === "changes_requested" ? "✗ chg" : null;
+  const reviewColor = details?.reviewState === "approved" ? "var(--review-approved)"
+    : details?.reviewState === "changes_requested" ? "var(--review-changes)" : "var(--text-muted)";
+  const ciLabel = details?.ciState === "success" ? "◆" : details?.ciState === "failure" ? "◆"
+    : details?.ciState === "pending" ? "◇" : null;
+  const ciColor = details?.ciState === "success" ? "var(--ci-success)"
+    : details?.ciState === "failure" ? "var(--ci-failure)" : "var(--ci-pending)";
+  const totalComments = (details?.reviewComments ?? 0) + (details?.commentCount ?? 0);
 
   const handleEnter = useCallback(() => {
     const rect = ref.current?.getBoundingClientRect();
@@ -151,7 +187,14 @@ function PrCard({ pr, details, showUrgency, starred, onHover, onHoverEnd, onStar
   }, [pr, details, onHover]);
 
   return (
-    <div className={`pr-card-wrap${starred ? " pr-card-wrap--starred" : ""}`}>
+    <div
+      className={[
+        "pr-card-wrap",
+        starred ? "pr-card-wrap--starred" : "",
+        focused ? "pr-card-wrap--focused" : "",
+      ].filter(Boolean).join(" ")}
+      ref={el => cardRef?.(el)}
+    >
       <a
         ref={ref}
         href={pr.htmlUrl}
@@ -159,63 +202,81 @@ function PrCard({ pr, details, showUrgency, starred, onHover, onHoverEnd, onStar
         rel="noopener noreferrer"
         aria-label={`PR #${pr.number}: ${pr.title}`}
         className="pr-card"
-        style={{ height: CARD_H }}
         onMouseEnter={handleEnter}
         onMouseLeave={onHoverEnd}
       >
-        {/* Row 1 — meta */}
+        {/* Row 1: meta */}
         <div className="pr-card-meta">
           <span className="pr-card-number">#{pr.number}</span>
           <div aria-hidden="true" className="pr-card-dot" style={{ background: dotColor }} />
           {age && <span className="pr-card-age" style={{ color: dotColor }}>{age}</span>}
+          {stale && <span className="pr-card-stale" title="No activity for 3+ days">stale</span>}
           <span className="pr-card-badges">
-            {reviewLabel && <span style={{ color: reviewColor, fontSize: 10, fontWeight: 700 }}>{reviewLabel}</span>}
-            {ciLabel && <span style={{ color: ciColor, fontSize: 10 }}>{ciLabel}</span>}
+            {reviewLabel && <span style={{ color: reviewColor }} className="pr-card-badge-text">{reviewLabel}</span>}
+            {ciLabel && <span style={{ color: ciColor }} className="pr-card-badge-icon">{ciLabel}</span>}
           </span>
         </div>
 
-        {/* Row 2 — title */}
+        {/* Row 2: full title (wraps) */}
         <div className="pr-card-title">{pr.title}</div>
 
-        {/* Row 3 — description (fixed 3-line block) */}
-        <div className="pr-card-desc">
-          {body || <span className="pr-card-nodesc">No description</span>}
-        </div>
+        {/* Row 3: dependency pills (if any) */}
+        {deps.length > 0 && (
+          <div className="pr-card-deps" onClick={e => e.preventDefault()}>
+            {deps.map(n => (
+              <a key={n} className="pr-card-dep" href={`${pr.htmlUrl.replace(/\/pull\/\d+$/, "")}/pull/${n}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>
+                ⤳ #{n}
+              </a>
+            ))}
+          </div>
+        )}
 
-        {/* Row 4 — footer */}
+        {/* Row 4: footer — star left, stats center, comments right */}
         <div className="pr-card-footer">
+          <button
+            type="button"
+            className={`pr-card-star${starred ? " pr-card-star--on" : ""}`}
+            aria-label={starred ? `Unstar PR #${pr.number}` : `Star PR #${pr.number}`}
+            aria-pressed={starred}
+            onClick={e => { e.preventDefault(); e.stopPropagation(); onStar(pr.number); }}
+          >
+            {starred ? "★" : "☆"}
+          </button>
+
           <span className="pr-card-author">{pr.author.login}</span>
+
           {details && details.changedFiles > 0 && (
             <span className="pr-card-diff">
               <span style={{ color: "var(--add-color)" }}>+{details.additions}</span>
-              <span style={{ color: "var(--text-muted)" }}>/</span>
+              <span className="pr-card-diff-sep">/</span>
               <span style={{ color: "var(--del-color)" }}>−{details.deletions}</span>
-              <span style={{ color: "var(--text-muted)" }}> {details.changedFiles}f</span>
+              <span className="pr-card-diff-sep">·</span>
+              <span style={{ color: "var(--text-muted)" }}>{details.changedFiles}f</span>
+            </span>
+          )}
+
+          {totalComments > 0 && (
+            <span className="pr-card-comments" title={[
+              details?.reviewComments ? `${details.reviewComments} review` : "",
+              details?.commentCount ? `${details.commentCount} general` : "",
+            ].filter(Boolean).join(", ")}>
+              💬 {totalComments}
             </span>
           )}
         </div>
       </a>
 
-      {/* Action buttons — outside <a> to avoid nested interactive elements */}
-      <div className="pr-card-actions">
-        <button
-          type="button"
-          className={`pr-card-star${starred ? " pr-card-star--on" : ""}`}
-          aria-label={starred ? `Unstar PR #${pr.number}` : `Star PR #${pr.number}`}
-          aria-pressed={starred}
-          onClick={() => onStar(pr.number)}
-        >
-          {starred ? "★" : "☆"}
-        </button>
-        <button
-          type="button"
-          className="pr-card-hide"
-          aria-label={`Hide PR #${pr.number}`}
-          onClick={() => { onHoverEnd(); onHide(pr.number); }}
-        >
-          ×
-        </button>
-      </div>
+      {/* Hide button — top-right, shown on hover, separate from star */}
+      <button
+        type="button"
+        className="pr-card-hide"
+        aria-label={`Hide PR #${pr.number}`}
+        onClick={() => { onHoverEnd(); onHide(pr.number); }}
+        tabIndex={-1}
+        title="Hide this PR"
+      >
+        ×
+      </button>
     </div>
   );
 }
@@ -224,61 +285,56 @@ function PrCard({ pr, details, showUrgency, starred, onHover, onHoverEnd, onStar
 
 interface SectionProps {
   title: string;
-  badge?: number;
   prs?: PrCardData[];
   detailsMap?: Record<number, PrDetails>;
   hidden: Set<number>;
   starred: Set<number>;
+  focusedPr: number | null;
   isLoading: boolean;
   showUrgency?: boolean;
   emptyMsg?: string;
   labelColor?: string;
+  searchQuery: string;
   onHover: (info: PopoverInfo) => void;
   onHoverEnd: () => void;
   onStar: (n: number) => void;
   onHide: (n: number) => void;
+  registerRef: (n: number, el: HTMLElement | null) => void;
 }
 
-function GridSection({
-  title, badge, prs, detailsMap, hidden, starred, isLoading,
-  showUrgency, emptyMsg = "—", labelColor,
-  onHover, onHoverEnd, onStar, onHide,
-}: SectionProps) {
-  const visible = prs?.filter(p => !hidden.has(p.number));
+function GridSection({ title, prs, detailsMap, hidden, starred, focusedPr, isLoading, showUrgency, emptyMsg = "—", labelColor, searchQuery, onHover, onHoverEnd, onStar, onHide, registerRef }: SectionProps) {
+  const visible = useMemo(() =>
+    prs?.filter(p => !hidden.has(p.number) && matchesSearch(p, searchQuery))
+      .sort((a, b) => (starred.has(b.number) ? 1 : 0) - (starred.has(a.number) ? 1 : 0)),
+    [prs, hidden, starred, searchQuery]
+  );
   const count = visible?.length ?? 0;
-  const sortedVisible = visible
-    ? [...visible].sort((a, b) => (starred.has(b.number) ? 1 : 0) - (starred.has(a.number) ? 1 : 0))
-    : undefined;
-
+  if (!isLoading && count === 0 && !searchQuery) return (
+    <section className="grid-section">
+      <div className="grid-section-header">
+        <span className="grid-section-title" style={{ color: labelColor }}>{title}</span>
+        <div className="grid-section-rule" />
+      </div>
+      <p className="grid-empty">{emptyMsg}</p>
+    </section>
+  );
+  if (!isLoading && count === 0 && searchQuery) return null;
   return (
     <section className="grid-section">
       <div className="grid-section-header">
         <span className="grid-section-title" style={{ color: labelColor }}>{title}</span>
-        {!isLoading && count > 0 && <span className="grid-section-badge">{badge ?? count}</span>}
+        {!isLoading && count > 0 && <span className="grid-section-badge">{count}</span>}
         <div className="grid-section-rule" />
       </div>
       {isLoading ? (
-        <div className="pr-grid">
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className="pr-card-skeleton" style={{ height: CARD_H }} aria-hidden="true" />
-          ))}
-        </div>
-      ) : count === 0 ? (
-        <p className="grid-empty">{emptyMsg}</p>
+        <div className="pr-grid">{[1,2,3,4].map(i => <div key={i} className="pr-card-skeleton" aria-hidden="true" />)}</div>
       ) : (
         <div className="pr-grid">
-          {sortedVisible!.map(pr => (
-            <PrCard
-              key={pr.number}
-              pr={pr}
-              details={detailsMap?.[pr.number]}
-              showUrgency={showUrgency}
-              starred={starred.has(pr.number)}
-              hidden={hidden.has(pr.number)}
-              onHover={onHover}
-              onHoverEnd={onHoverEnd}
-              onStar={onStar}
-              onHide={onHide}
+          {visible!.map(pr => (
+            <PrCard key={pr.number} pr={pr} details={detailsMap?.[pr.number]}
+              showUrgency={showUrgency} starred={starred.has(pr.number)} focused={focusedPr === pr.number}
+              onHover={onHover} onHoverEnd={onHoverEnd} onStar={onStar} onHide={onHide}
+              cardRef={el => registerRef(pr.number, el)}
             />
           ))}
         </div>
@@ -287,18 +343,12 @@ function GridSection({
   );
 }
 
-// ── Hidden section ─────────────────────────────────────────────────────────────
+// ── Hidden drawer ─────────────────────────────────────────────────────────────
 
-function HiddenDrawer({
-  allPrs, detailsMap, hidden, starred, onShow, onClear, onStar,
-}: {
-  allPrs: PrCardData[];
-  detailsMap?: Record<number, PrDetails>;
-  hidden: Set<number>;
-  starred: Set<number>;
-  onShow: (n: number) => void;
-  onClear: () => void;
-  onStar: (n: number) => void;
+function HiddenDrawer({ allPrs, detailsMap, hidden, starred, onShow, onClear, onStar }: {
+  allPrs: PrCardData[]; detailsMap?: Record<number, PrDetails>;
+  hidden: Set<number>; starred: Set<number>;
+  onShow: (n: number) => void; onClear: () => void; onStar: (n: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   const hiddenPrs = allPrs.filter(p => hidden.has(p.number));
@@ -325,14 +375,51 @@ function HiddenDrawer({
   );
 }
 
+// ── Keyboard shortcut help ────────────────────────────────────────────────────
+
+function ShortcutHelp({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="shortcut-overlay" onClick={onClose}>
+      <div className="shortcut-modal" onClick={e => e.stopPropagation()}>
+        <div className="shortcut-header">
+          <span>Keyboard shortcuts</span>
+          <button type="button" onClick={onClose} className="shortcut-close">×</button>
+        </div>
+        {[
+          ["/", "Focus search"],
+          ["j / ↓", "Next PR"],
+          ["k / ↑", "Previous PR"],
+          ["o / Enter", "Open PR in GitHub"],
+          ["s", "Star / unstar PR"],
+          ["h", "Hide PR"],
+          ["1", "My PRs tab"],
+          ["2", "Review Queue tab"],
+          ["Esc", "Clear search / close"],
+          ["?", "Show this help"],
+        ].map(([key, desc]) => (
+          <div key={key} className="shortcut-row">
+            <kbd className="shortcut-key">{key}</kbd>
+            <span className="shortcut-desc">{desc}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 type Tab = "mine" | "review";
-
 interface Props { refreshIntervalMs: number; myLogin: string; repo: string; }
 
 export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props) {
   const [tab, setTab] = useState<Tab>("mine");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [focusedPr, setFocusedPr] = useState<number | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const cardRefs = useRef<Map<number, HTMLElement>>(new Map());
+
   const { myPrs, tmPrs, rvPrs, detailsMap, isLoading, refresh } = useDashboardData(refreshIntervalMs);
   const { set: hidden, add: hide, remove: show, clear: clearHidden } = useLocalSet("gh-dash:hidden-prs");
   const { set: starred, add: star, remove: unstar } = useLocalSet("gh-dash:starred-prs");
@@ -348,102 +435,136 @@ export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props
   }, []);
   useEffect(() => () => { if (hideTimer.current) clearTimeout(hideTimer.current); }, []);
 
-  const toggleStar = useCallback((n: number) => {
-    starred.has(n) ? unstar(n) : star(n);
-  }, [starred, star, unstar]);
+  const toggleStar = useCallback((n: number) => { starred.has(n) ? unstar(n) : star(n); }, [starred, star, unstar]);
+  const registerRef = useCallback((n: number, el: HTMLElement | null) => {
+    if (el) cardRefs.current.set(n, el); else cardRefs.current.delete(n);
+  }, []);
+
+  // Flat ordered list of all visible PRs for keyboard nav
+  const visiblePrNumbers = useMemo(() => {
+    const all: PrCardData[] = tab === "mine"
+      ? [...(myPrs?.active ?? []), ...(myPrs?.drafts ?? []), ...(myPrs?.recentlyClosed ?? [])]
+      : [...(rvPrs?.reviewRequests ?? []), ...Object.values(tmPrs?.byTeammate ?? {}).flat()];
+    return all.filter(p => !hidden.has(p.number) && matchesSearch(p, searchQuery)).map(p => p.number);
+  }, [tab, myPrs, rvPrs, tmPrs, hidden, searchQuery]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const inInput = document.activeElement?.tagName === "INPUT";
+      if (e.key === "?" && !inInput) { setShowHelp(s => !s); return; }
+      if (e.key === "Escape") {
+        if (showHelp) { setShowHelp(false); return; }
+        if (searchQuery) { setSearchQuery(""); searchRef.current?.blur(); return; }
+        setFocusedPr(null); return;
+      }
+      if (e.key === "/" && !inInput) { e.preventDefault(); searchRef.current?.focus(); return; }
+      if (e.key === "1" && !inInput) { setTab("mine"); return; }
+      if (e.key === "2" && !inInput) { setTab("review"); return; }
+      if (inInput) return;
+
+      const idx = focusedPr !== null ? visiblePrNumbers.indexOf(focusedPr) : -1;
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = Math.min(idx + 1, visiblePrNumbers.length - 1);
+        const n = visiblePrNumbers[next];
+        setFocusedPr(n ?? null);
+        if (n) cardRefs.current.get(n)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        return;
+      }
+      if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const prev = Math.max(idx - 1, 0);
+        const n = visiblePrNumbers[prev];
+        setFocusedPr(n ?? null);
+        if (n) cardRefs.current.get(n)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        return;
+      }
+      if (focusedPr === null) return;
+      const pr = [...(myPrs?.active ?? []), ...(myPrs?.drafts ?? []), ...(myPrs?.recentlyClosed ?? []),
+        ...(rvPrs?.reviewRequests ?? []), ...Object.values(tmPrs?.byTeammate ?? {}).flat()]
+        .find(p => p.number === focusedPr);
+      if (!pr) return;
+      if (e.key === "o" || e.key === "Enter") { window.open(pr.htmlUrl, "_blank"); return; }
+      if (e.key === "s") { toggleStar(focusedPr); return; }
+      if (e.key === "h") { hide(focusedPr); setFocusedPr(null); return; }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [focusedPr, visiblePrNumbers, searchQuery, showHelp, myPrs, rvPrs, tmPrs, toggleStar, hide]);
 
   const reviewQueue = useMemo(() =>
-    rvPrs?.reviewRequests
-      ? [...rvPrs.reviewRequests].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt))
-      : undefined,
+    rvPrs?.reviewRequests ? [...rvPrs.reviewRequests].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt)) : undefined,
     [rvPrs]
   );
-
   const allPrs = useMemo(() => {
     const seen = new Set<number>(); const result: PrCardData[] = [];
     const add = (arr?: PrCardData[]) => arr?.forEach(p => { if (!seen.has(p.number)) { seen.add(p.number); result.push(p); } });
-    add(myPrs?.active); add(myPrs?.drafts); add(myPrs?.recentlyClosed);
-    add(rvPrs?.reviewRequests);
+    add(myPrs?.active); add(myPrs?.drafts); add(myPrs?.recentlyClosed); add(rvPrs?.reviewRequests);
     tmPrs && Object.values(tmPrs.byTeammate).flat().forEach(p => { if (!seen.has(p.number)) { seen.add(p.number); result.push(p); } });
     return result;
   }, [myPrs, rvPrs, tmPrs]);
 
-  const cardProps = { detailsMap, hidden, starred, isLoading: false, onHover, onHoverEnd, onStar: toggleStar, onHide: hide };
-  const reviewVisibleCount = reviewQueue?.filter(p => !hidden.has(p.number)).length ?? 0;
+  const reviewCount = reviewQueue?.filter(p => !hidden.has(p.number)).length ?? 0;
+  const sectionProps = { detailsMap, hidden, starred, focusedPr, isLoading: false, searchQuery, onHover, onHoverEnd, onStar: toggleStar, onHide: hide, registerRef };
 
   return (
     <div className="view-root">
       <NavBar repo={repo} onRefresh={refresh} isLoading={isLoading} lastFetchedAt={myPrs?.lastFetchedAt} />
 
-      {/* ── Tab bar ── */}
-      <div className="tab-bar" role="tablist" aria-label="Dashboard views">
-        <button
-          role="tab" type="button"
-          aria-selected={tab === "mine"}
-          className={`tab-btn${tab === "mine" ? " tab-btn--active" : ""}`}
-          onClick={() => setTab("mine")}
-        >
-          My PRs
-          {!isLoading && myPrs && (
-            <span className="tab-badge">
-              {(myPrs.active?.filter(p => !hidden.has(p.number)).length ?? 0) +
-               (myPrs.drafts?.filter(p => !hidden.has(p.number)).length ?? 0)}
-            </span>
-          )}
-        </button>
-        <button
-          role="tab" type="button"
-          aria-selected={tab === "review"}
-          className={`tab-btn${tab === "review" ? " tab-btn--active" : ""}`}
-          onClick={() => setTab("review")}
-        >
-          Review Queue
-          {!isLoading && reviewVisibleCount > 0 && (
-            <span className="tab-badge tab-badge--urgent">{reviewVisibleCount}</span>
-          )}
-        </button>
+      {/* Tab bar */}
+      <div className="tab-bar" role="tablist">
+        {([["mine", "My PRs", (myPrs?.active?.filter(p => !hidden.has(p.number)).length ?? 0) + (myPrs?.drafts?.filter(p => !hidden.has(p.number)).length ?? 0), false] as const,
+          ["review", "Review Queue", reviewCount, reviewCount > 0] as const]).map(([id, label, count, urgent]) => (
+          <button key={id} role="tab" type="button" aria-selected={tab === id}
+            className={`tab-btn${tab === id ? " tab-btn--active" : ""}`}
+            onClick={() => setTab(id)}>
+            {label}
+            {!isLoading && count > 0 && <span className={`tab-badge${urgent ? " tab-badge--urgent" : ""}`}>{count}</span>}
+          </button>
+        ))}
+        <button type="button" className="tab-help-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Show keyboard shortcuts">?</button>
+      </div>
+
+      {/* Search bar */}
+      <div className="search-bar">
+        <span className="search-icon" aria-hidden="true">⌕</span>
+        <input
+          ref={searchRef}
+          type="search"
+          className="search-input"
+          placeholder="Search by title, author, label, #number…"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          aria-label="Search PRs"
+        />
+        {searchQuery && <button type="button" className="search-clear" onClick={() => setSearchQuery("")} aria-label="Clear search">×</button>}
+        {focusedPr && <span className="search-focus-hint">PR #{focusedPr} focused · j/k to navigate</span>}
       </div>
 
       <main id="main-content" className="control-main">
-
-        {/* ── My PRs tab ── */}
         {tab === "mine" && (
           <>
             {starred.size > 0 && (
-              <GridSection title="Starred" badge={[...(myPrs?.active ?? []), ...(myPrs?.drafts ?? []), ...(myPrs?.recentlyClosed ?? [])].filter(p => starred.has(p.number) && !hidden.has(p.number)).length}
-                prs={allPrs.filter(p => starred.has(p.number))}
-                {...cardProps} isLoading={isLoading} labelColor="var(--warning)"
-                emptyMsg="—"
-              />
+              <GridSection title="Starred" labelColor="var(--warning)"
+                prs={allPrs.filter(p => starred.has(p.number))} {...sectionProps} emptyMsg="—" />
             )}
-            <GridSection title="Active" prs={myPrs?.active} {...cardProps} isLoading={isLoading} labelColor="var(--success)" emptyMsg="No active PRs" />
-            <GridSection title="Draft" prs={myPrs?.drafts} {...cardProps} isLoading={isLoading} emptyMsg="No drafts" />
-            <GridSection title="Recently closed" prs={myPrs?.recentlyClosed} {...cardProps} isLoading={isLoading} emptyMsg="—" />
+            <GridSection title="Active" labelColor="var(--success)" prs={myPrs?.active} {...sectionProps} isLoading={isLoading} emptyMsg="No active PRs" />
+            <GridSection title="Draft" prs={myPrs?.drafts} {...sectionProps} isLoading={isLoading} emptyMsg="No drafts" />
+            <GridSection title="Recently closed" prs={myPrs?.recentlyClosed} {...sectionProps} isLoading={isLoading} emptyMsg="—" />
           </>
         )}
-
-        {/* ── Review Queue tab ── */}
         {tab === "review" && (
           <>
-            <GridSection
-              title="Needs your review"
-              prs={reviewQueue}
-              {...cardProps} isLoading={rvPrs === undefined}
-              showUrgency
-              emptyMsg="Inbox zero"
-              labelColor={reviewVisibleCount > 0 ? "var(--danger)" : undefined}
-            />
+            <GridSection title="Needs your review" labelColor={reviewCount > 0 ? "var(--danger)" : undefined}
+              prs={reviewQueue} {...sectionProps} isLoading={rvPrs === undefined} showUrgency emptyMsg="Inbox zero" />
             {tmPrs && Object.entries(tmPrs.byTeammate).map(([login, prs]) => (
-              <GridSection key={login} title={`@${login}`} prs={prs} {...cardProps} isLoading={false} emptyMsg="—" />
+              <GridSection key={login} title={`@${login}`} prs={prs} {...sectionProps} emptyMsg="—" />
             ))}
           </>
         )}
-
-        <HiddenDrawer
-          allPrs={allPrs} detailsMap={detailsMap}
-          hidden={hidden} starred={starred}
-          onShow={show} onClear={clearHidden} onStar={toggleStar}
-        />
+        <HiddenDrawer allPrs={allPrs} detailsMap={detailsMap} hidden={hidden} starred={starred}
+          onShow={show} onClear={clearHidden} onStar={toggleStar} />
       </main>
 
       {popover && (
@@ -451,104 +572,113 @@ export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props
           <Popover info={popover} />
         </div>
       )}
+      {showHelp && <ShortcutHelp onClose={() => setShowHelp(false)} />}
 
       <style>{`
-        .view-root { height:100vh; display:flex; flex-direction:column; overflow:hidden; }
-
+        .view-root{height:100vh;display:flex;flex-direction:column;overflow:hidden;}
         /* Tab bar */
-        .tab-bar { display:flex; gap:0; border-bottom:1px solid var(--border); background:var(--bg-subtle); padding:0 20px; flex-shrink:0; }
-        .tab-btn { background:transparent; border:none; border-bottom:2px solid transparent; color:var(--text-secondary); cursor:pointer; font-size:12px; font-family:inherit; font-weight:500; padding:10px 14px; display:flex; align-items:center; gap:6px; transition:color .1s,border-color .1s; margin-bottom:-1px; }
-        .tab-btn:hover { color:var(--text-primary); }
-        .tab-btn--active { color:var(--text-primary); font-weight:600; border-bottom-color:var(--accent); }
-        .tab-badge { font-family:'JetBrains Mono',monospace; font-size:10px; background:var(--bg-card); border:1px solid var(--border); border-radius:10px; padding:0 6px; color:var(--text-secondary); }
-        .tab-badge--urgent { background:var(--danger-dim); border-color:var(--danger); color:var(--danger); }
-
-        .control-main { flex:1; overflow-y:auto; padding:20px 20px 48px; display:flex; flex-direction:column; gap:0; }
-
+        .tab-bar{display:flex;align-items:center;gap:0;border-bottom:1px solid var(--border);background:var(--bg-subtle);padding:0 20px;flex-shrink:0;}
+        .tab-btn{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-secondary);cursor:pointer;font-size:12px;font-family:inherit;font-weight:500;padding:10px 14px;display:flex;align-items:center;gap:6px;transition:color .1s,border-color .1s;margin-bottom:-1px;}
+        .tab-btn:hover{color:var(--text-primary);}
+        .tab-btn--active{color:var(--text-primary);font-weight:600;border-bottom-color:var(--accent);}
+        .tab-badge{font-family:'JetBrains Mono',monospace;font-size:10px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:0 6px;color:var(--text-secondary);}
+        .tab-badge--urgent{background:var(--danger-dim);border-color:var(--danger);color:var(--danger);}
+        .tab-help-btn{margin-left:auto;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer;font-size:11px;font-family:'JetBrains Mono',monospace;width:22px;height:22px;display:flex;align-items:center;justify-content:center;transition:color .1s,border-color .1s;}
+        .tab-help-btn:hover{color:var(--text-primary);border-color:var(--border-strong);}
+        /* Search bar */
+        .search-bar{display:flex;align-items:center;gap:8px;padding:8px 20px;border-bottom:1px solid var(--border);background:var(--bg-subtle);flex-shrink:0;}
+        .search-icon{font-size:15px;color:var(--text-muted);}
+        .search-input{flex:1;background:transparent;border:none;color:var(--text-primary);font-size:12px;font-family:inherit;outline:none;}
+        .search-input::placeholder{color:var(--text-muted);}
+        .search-clear{background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:0 4px;line-height:1;}
+        .search-clear:hover{color:var(--text-primary);}
+        .search-focus-hint{font-size:10px;color:var(--accent);font-family:'JetBrains Mono',monospace;white-space:nowrap;}
+        /* Main */
+        .control-main{flex:1;overflow-y:auto;padding:16px 20px 48px;}
         /* Section */
-        .grid-section { margin-bottom:24px; }
-        .grid-section-header { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
-        .grid-section-title { font-size:10px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:var(--text-muted); }
-        .grid-section-badge { font-size:10px; font-family:'JetBrains Mono',monospace; color:var(--text-muted); background:var(--bg-card); border:1px solid var(--border); border-radius:3px; padding:0 5px; line-height:16px; }
-        .grid-section-rule { flex:1; height:1px; background:var(--border); }
-        .grid-empty { font-size:12px; color:var(--text-muted); font-style:italic; padding:4px 0; }
-
-        /* Grid */
-        .pr-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:8px; }
-
+        .grid-section{margin-bottom:20px;}
+        .grid-section-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+        .grid-section-title{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted);}
+        .grid-section-badge{font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text-muted);background:var(--bg-card);border:1px solid var(--border);border-radius:3px;padding:0 5px;line-height:16px;}
+        .grid-section-rule{flex:1;height:1px;background:var(--border);}
+        .grid-empty{font-size:12px;color:var(--text-muted);font-style:italic;padding:4px 0;}
+        /* Grid — auto rows so cards within a row align */
+        .pr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;align-items:start;}
         /* Skeleton */
-        .pr-card-skeleton { border-radius:7px; background:var(--bg-card); border:1px solid var(--border); animation:pulse 1.5s ease infinite; }
-
-        /* Card wrapper (for action buttons outside <a>) */
-        .pr-card-wrap { position:relative; }
-        .pr-card-wrap--starred .pr-card { border-left:3px solid var(--warning); }
-
-        .pr-card {
-          display:flex; flex-direction:column; justify-content:space-between;
-          padding:10px 12px; padding-right:36px; /* room for action buttons */
-          background:var(--bg-card); border:1px solid var(--border); border-radius:7px;
-          text-decoration:none; cursor:pointer; overflow:hidden;
-          transition:background .1s, border-color .1s;
-          box-sizing:border-box; width:100%;
-        }
-        .pr-card:hover { background:var(--bg-card-hover); border-color:var(--border-strong); }
-
-        /* Row 1: meta */
-        .pr-card-meta { display:flex; align-items:center; gap:5px; flex-shrink:0; }
-        .pr-card-number { font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; color:var(--text-muted); flex-shrink:0; }
-        .pr-card-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
-        .pr-card-age { font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; flex-shrink:0; }
-        .pr-card-badges { display:flex; align-items:center; gap:4px; margin-left:auto; flex-shrink:0; }
-
-        /* Row 2: title */
-        .pr-card-title { font-size:12px; font-weight:600; color:var(--text-primary); line-height:1.35; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; flex-shrink:0; }
-
-        /* Row 3: description — flex:1 fills remaining space */
-        .pr-card-desc { flex:1; overflow:hidden; font-size:11px; line-height:1.5; color:var(--text-secondary); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; word-break:break-word; margin:3px 0; }
-        .pr-card-nodesc { color:var(--text-muted); font-style:italic; }
-
-        /* Row 4: footer */
-        .pr-card-footer { display:flex; align-items:center; gap:6px; flex-shrink:0; }
-        .pr-card-author { font-size:10px; color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:90px; }
-        .pr-card-diff { font-family:'JetBrains Mono',monospace; font-size:9.5px; display:flex; gap:1px; }
-
-        /* Action buttons */
-        .pr-card-actions { position:absolute; top:6px; right:6px; display:flex; flex-direction:column; gap:2px; opacity:0; transition:opacity .1s; }
-        .pr-card-wrap:hover .pr-card-actions { opacity:1; }
-        .pr-card-star { background:transparent; border:none; cursor:pointer; font-size:13px; color:var(--text-muted); padding:1px 3px; border-radius:3px; line-height:1; transition:color .1s; }
-        .pr-card-star:hover,.pr-card-star--on { color:var(--warning); }
-        .pr-card-hide { background:transparent; border:none; cursor:pointer; font-size:14px; color:var(--text-muted); padding:0 3px; border-radius:3px; line-height:1; transition:color .1s; }
-        .pr-card-hide:hover { color:var(--danger); }
-
+        .pr-card-skeleton{border-radius:7px;background:var(--bg-card);border:1px solid var(--border);height:90px;animation:pulse 1.5s ease infinite;}
+        /* Card */
+        .pr-card-wrap{position:relative;}
+        .pr-card-wrap--starred .pr-card{border-left:3px solid var(--warning);}
+        .pr-card-wrap--focused .pr-card{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-glow);}
+        .pr-card{display:flex;flex-direction:column;gap:5px;padding:10px 32px 10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:7px;text-decoration:none;cursor:pointer;transition:background .1s,border-color .1s;width:100%;box-sizing:border-box;}
+        .pr-card:hover{background:var(--bg-card-hover);border-color:var(--border-strong);}
+        /* Row 1 */
+        .pr-card-meta{display:flex;align-items:center;gap:5px;flex-shrink:0;}
+        .pr-card-number{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--text-muted);flex-shrink:0;}
+        .pr-card-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+        .pr-card-age{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;flex-shrink:0;}
+        .pr-card-stale{font-size:9px;font-weight:700;color:var(--warning);background:var(--warning-dim);border-radius:3px;padding:0 4px;letter-spacing:.03em;}
+        .pr-card-badges{display:flex;align-items:center;gap:4px;margin-left:auto;}
+        .pr-card-badge-text{font-size:9.5px;font-weight:700;}
+        .pr-card-badge-icon{font-size:10px;}
+        /* Row 2: full title, no truncation */
+        .pr-card-title{font-size:12px;font-weight:600;color:var(--text-primary);line-height:1.4;word-break:break-word;}
+        /* Row 3: deps */
+        .pr-card-deps{display:flex;flex-wrap:wrap;gap:4px;}
+        .pr-card-dep{font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--accent);background:var(--accent-glow);border-radius:3px;padding:1px 5px;text-decoration:none;transition:opacity .1s;}
+        .pr-card-dep:hover{opacity:.75;}
+        /* Row 4: footer — star left, then content, spaced */
+        .pr-card-footer{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+        .pr-card-star{background:transparent;border:none;cursor:pointer;font-size:13px;color:var(--text-muted);padding:0 2px;line-height:1;flex-shrink:0;transition:color .1s;}
+        .pr-card-star:hover,.pr-card-star--on{color:var(--warning);}
+        .pr-card-author{font-size:10px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px;flex-shrink:0;}
+        .pr-card-diff{font-family:'JetBrains Mono',monospace;font-size:9.5px;display:flex;align-items:center;gap:3px;}
+        .pr-card-diff-sep{color:var(--text-muted);}
+        .pr-card-comments{font-size:10px;color:var(--text-secondary);margin-left:auto;flex-shrink:0;}
+        /* Hide button — top-right, appears on hover, AWAY from star */
+        .pr-card-hide{position:absolute;top:6px;right:6px;background:transparent;border:none;cursor:pointer;font-size:14px;color:var(--text-muted);padding:0 3px;line-height:1;opacity:0;transition:opacity .1s,color .1s;border-radius:3px;}
+        .pr-card-wrap:hover .pr-card-hide{opacity:1;}
+        .pr-card-hide:hover{color:var(--danger);}
         /* Popover */
-        .popover { position:fixed; z-index:1000; background:var(--bg-card); border:1px solid var(--border-strong); border-radius:10px; padding:14px 16px; box-shadow:0 8px 32px rgba(0,0,0,.5); pointer-events:auto; }
-        .popover-header { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
-        .popover-number { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:600; color:var(--text-muted); }
-        .popover-state { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; padding:1px 6px; border-radius:3px; }
-        .popover-label { font-size:10px; font-weight:600; padding:1px 6px; border-radius:3px; color:#000; }
-        .popover-title { font-size:13px; font-weight:600; color:var(--text-primary); line-height:1.45; margin-bottom:10px; }
-        .popover-meta { display:flex; flex-direction:column; gap:3px; border-top:1px solid var(--border); padding-top:8px; margin-bottom:8px; }
-        .popover-row { display:flex; justify-content:space-between; gap:12px; }
-        .popover-row-label { font-size:11px; color:var(--text-muted); flex-shrink:0; }
-        .popover-row-value { font-size:11px; color:var(--text-secondary); text-align:right; }
-        .popover-body { font-size:11px; color:var(--text-secondary); line-height:1.55; border-top:1px solid var(--border); padding-top:8px; white-space:pre-wrap; word-break:break-word; max-height:200px; overflow-y:auto; }
-        .popover-hint { font-size:10px; color:var(--accent); margin-top:8px; }
-
+        .popover{position:fixed;z-index:1000;background:var(--bg-card);border:1px solid var(--border-strong);border-radius:10px;padding:14px 16px;box-shadow:0 8px 32px rgba(0,0,0,.5);pointer-events:auto;}
+        .popover-header{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;}
+        .popover-number{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text-muted);}
+        .popover-state{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:3px;}
+        .popover-label{font-size:10px;font-weight:600;padding:1px 6px;border-radius:3px;color:#000;}
+        .popover-title{font-size:13px;font-weight:600;color:var(--text-primary);line-height:1.45;margin-bottom:10px;word-break:break-word;}
+        .popover-meta{display:flex;flex-direction:column;gap:3px;border-top:1px solid var(--border);padding-top:8px;margin-bottom:8px;}
+        .popover-row{display:flex;justify-content:space-between;gap:12px;}
+        .popover-row-label{font-size:11px;color:var(--text-muted);flex-shrink:0;}
+        .popover-row-value{font-size:11px;color:var(--text-secondary);text-align:right;}
+        .popover-deps{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;padding-top:6px;border-top:1px solid var(--border);}
+        .popover-deps-label{font-size:10px;color:var(--text-muted);flex-shrink:0;}
+        .popover-dep-pill{font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--accent);background:var(--accent-glow);border-radius:3px;padding:1px 6px;text-decoration:none;}
+        .popover-body{font-size:11px;color:var(--text-secondary);line-height:1.55;border-top:1px solid var(--border);padding-top:8px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto;}
+        .popover-hint{font-size:10px;color:var(--accent);margin-top:8px;}
         /* Hidden drawer */
-        .hidden-drawer { margin-top:8px; border-top:1px solid var(--border); padding-top:8px; }
-        .hidden-toggle { display:flex; align-items:center; justify-content:space-between; width:100%; background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:11px; font-family:inherit; padding:4px 0; gap:8px; }
-        .hidden-toggle:hover { color:var(--text-secondary); }
-        .hidden-clear { font-size:10px; color:var(--accent); background:transparent; border:none; cursor:pointer; font-family:inherit; padding:0; margin-left:auto; }
-        .hidden-clear:hover { text-decoration:underline; }
-        .hidden-list { margin-top:6px; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
-        .hidden-row { display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--border); }
-        .hidden-row:last-child { border-bottom:none; }
-        .hidden-num { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--text-muted); width:50px; flex-shrink:0; }
-        .hidden-title { font-size:12px; color:var(--text-secondary); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .hidden-star { background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:13px; padding:0 3px; }
-        .hidden-star:hover,.hidden-star--on { color:var(--warning); }
-        .hidden-restore { background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:13px; padding:0 4px; flex-shrink:0; }
-        .hidden-restore:hover { color:var(--success); }
+        .hidden-drawer{margin-top:8px;border-top:1px solid var(--border);padding-top:8px;}
+        .hidden-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;font-family:inherit;padding:4px 0;gap:8px;}
+        .hidden-toggle:hover{color:var(--text-secondary);}
+        .hidden-clear{font-size:10px;color:var(--accent);background:transparent;border:none;cursor:pointer;font-family:inherit;padding:0;margin-left:auto;}
+        .hidden-clear:hover{text-decoration:underline;}
+        .hidden-list{margin-top:6px;border:1px solid var(--border);border-radius:6px;overflow:hidden;}
+        .hidden-row{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border);}
+        .hidden-row:last-child{border-bottom:none;}
+        .hidden-num{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted);width:50px;flex-shrink:0;}
+        .hidden-title{font-size:12px;color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+        .hidden-star{background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:0 3px;}
+        .hidden-star:hover,.hidden-star--on{color:var(--warning);}
+        .hidden-restore{background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:0 4px;flex-shrink:0;}
+        .hidden-restore:hover{color:var(--success);}
+        /* Keyboard help modal */
+        .shortcut-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center;}
+        .shortcut-modal{background:var(--bg-card);border:1px solid var(--border-strong);border-radius:10px;padding:20px;min-width:280px;box-shadow:0 8px 32px rgba(0,0,0,.5);}
+        .shortcut-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;font-size:13px;font-weight:600;color:var(--text-primary);}
+        .shortcut-close{background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;padding:0 4px;line-height:1;}
+        .shortcut-close:hover{color:var(--text-primary);}
+        .shortcut-row{display:flex;align-items:center;gap:12px;padding:4px 0;}
+        kbd.shortcut-key{font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--bg-subtle);border:1px solid var(--border-strong);border-radius:4px;padding:2px 7px;color:var(--text-primary);min-width:60px;text-align:center;}
+        .shortcut-desc{font-size:12px;color:var(--text-secondary);}
       `}</style>
     </div>
   );

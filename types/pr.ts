@@ -36,6 +36,10 @@ export interface PrDetails {
   additions: number;
   deletions: number;
   changedFiles: number;
+  /** Review line comments (threads) */
+  reviewComments: number;
+  /** General issue-style comments on the PR */
+  commentCount: number;
 }
 
 export interface MyPrsResponse {
