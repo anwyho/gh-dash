@@ -1,74 +1,91 @@
 @import "tailwindcss";
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
 
 :root {
-  --bg: #0f0e0d;
-  --bg-card: #1a1917;
-  --bg-card-hover: #201f1d;
-  --border: #2e2b28;
-  --border-hover: #4a4540;
-  --text-primary: #e8e2d9;
-  --text-muted: #7a7670;
-  --text-faint: #3d3a37;
-  --accent: #f0a500;
-  --accent-dim: #9e6d00;
-  --blue: #4a9eff;
-  --state-draft: #6b6560;
-  --state-open: #3fb950;
-  --state-merged: #a371f7;
-  --state-closed: #f85149;
-  --ci-success: #3fb950;
-  --ci-failure: #f85149;
-  --ci-pending: #f0a500;
-  --ci-unknown: #4b4845;
-  --review-approved: #3fb950;
-  --review-changes: #f85149;
-  --review-pending: #f0a500;
+  /* Surfaces */
+  --bg: #0c0c0f;
+  --bg-subtle: #101014;
+  --bg-card: #15151a;
+  --bg-card-hover: #1b1b22;
+  --bg-overlay: rgba(12, 12, 15, 0.96);
+
+  /* Borders */
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.13);
+  --border-focus: rgba(99, 102, 241, 0.5);
+
+  /* Text */
+  --text-primary: #f0f0f5;
+  --text-secondary: #8787a0;
+  --text-muted: #3f3f52;
+  --text-inverse: #0c0c0f;
+
+  /* Accent — Stripe indigo */
+  --accent: #6366f1;
+  --accent-dim: #4f52c7;
+  --accent-glow: rgba(99, 102, 241, 0.15);
+
+  /* Semantic */
+  --success: #22c55e;
+  --success-dim: rgba(34, 197, 94, 0.12);
+  --warning: #f59e0b;
+  --warning-dim: rgba(245, 158, 11, 0.12);
+  --danger: #ef4444;
+  --danger-dim: rgba(239, 68, 68, 0.12);
+  --merged: #a855f7;
+  --merged-dim: rgba(168, 85, 247, 0.12);
+
+  /* PR states */
+  --state-draft: #52525b;
+  --state-open: #22c55e;
+  --state-merged: #a855f7;
+  --state-closed: #ef4444;
+
+  /* Urgency (for review age) */
+  --urgent-none: #22c55e;
+  --urgent-low: #84cc16;
+  --urgent-mid: #f59e0b;
+  --urgent-high: #ef4444;
+
+  /* CI/Review */
+  --ci-success: #22c55e;
+  --ci-failure: #ef4444;
+  --ci-pending: #f59e0b;
+  --ci-unknown: #3f3f52;
+  --review-approved: #22c55e;
+  --review-changes: #ef4444;
+  --review-pending: #f59e0b;
 }
 
-* {
+*, *::before, *::after {
   box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
 html {
-  font-family: "JetBrains Mono", "Courier New", monospace;
-  background-color: var(--bg);
+  font-family: "Manrope", -apple-system, sans-serif;
+  background: var(--bg);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
 }
 
 body {
-  margin: 0;
   min-height: 100vh;
 }
 
-/* Subtle scanline texture */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background-image: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.03) 2px,
-    rgba(0, 0, 0, 0.03) 4px
-  );
-  pointer-events: none;
-  z-index: 9999;
-}
+/* Minimal scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: var(--bg);
-}
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--border-hover);
+/* Mono for codes */
+.mono {
+  font-family: "JetBrains Mono", monospace;
+  font-feature-settings: "liga" 0;
 }

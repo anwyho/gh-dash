@@ -1,408 +1,306 @@
 "use client";
 
 import useSWR from "swr";
+import useSWRImmutable from "swr/immutable";
 import { useCallback } from "react";
 import { formatDistanceToNow, differenceInDays } from "date-fns";
 import type {
-  PrCardData,
-  MyPrsResponse,
-  TeammatePrsResponse,
-  ReviewRequestsResponse,
-  PrDetails,
+  PrCardData, PrDetails,
+  MyPrsResponse, TeammatePrsResponse, ReviewRequestsResponse,
 } from "@/types/pr";
 import NavBar from "@/components/NavBar";
-import useSWRImmutable from "swr/immutable";
+import { fetcher } from "@/lib/fetcher";
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
-
-interface Props {
-  refreshIntervalMs: number;
-  myLogin: string;
-  repo: string;
+function ageColor(createdAt: string) {
+  const d = differenceInDays(new Date(), new Date(createdAt));
+  if (d < 1) return "var(--urgent-none)";
+  if (d < 2) return "var(--urgent-low)";
+  if (d < 4) return "var(--urgent-mid)";
+  return "var(--urgent-high)";
+}
+function ageLabel(createdAt: string) {
+  const d = differenceInDays(new Date(), new Date(createdAt));
+  if (d === 0) return "today";
+  if (d === 1) return "1d";
+  return `${d}d`;
 }
 
-// Urgency based on PR age in days
-function urgencyColor(createdAt: string): string {
-  const days = differenceInDays(new Date(), new Date(createdAt));
-  if (days < 1) return "var(--state-open)";
-  if (days < 3) return "var(--accent)";
-  return "var(--state-closed)";
-}
+const STATE_DOT: Record<string, string> = {
+  draft: "var(--state-draft)",
+  open: "var(--state-open)",
+  merged: "var(--state-merged)",
+  closed: "var(--state-closed)",
+};
 
-function urgencyLabel(createdAt: string): string {
-  const days = differenceInDays(new Date(), new Date(createdAt));
-  if (days < 1) return "today";
-  if (days === 1) return "1d";
-  return `${days}d`;
-}
+// ── Compact PR chip ─────────────────────────────────────────────────────────
 
-// ── Compact PR card used in swimlanes ──────────────────────────────────────
-
-function PrChip({ pr, showAge = false }: { pr: PrCardData; showAge?: boolean }) {
+function PrChip({ pr, showUrgency = false }: { pr: PrCardData; showUrgency?: boolean }) {
   const { data: details } = useSWRImmutable<PrDetails>(
-    `/api/pr-details?number=${pr.number}`,
-    fetcher
+    `/api/pr-details?number=${pr.number}`, fetcher
   );
-  const ageColor = urgencyColor(pr.createdAt);
-  const ageLabel = urgencyLabel(pr.createdAt);
-  const relTime = formatDistanceToNow(new Date(pr.updatedAt), { addSuffix: true });
+  const dotColor = showUrgency ? ageColor(pr.createdAt) : STATE_DOT[pr.state];
+  const age = showUrgency ? ageLabel(pr.createdAt) : null;
+  const rel = formatDistanceToNow(new Date(pr.updatedAt), { addSuffix: true });
 
   return (
     <a
       href={pr.htmlUrl}
       target="_blank"
       rel="noopener noreferrer"
-      title={`${pr.title}\nby @${pr.author.login}\nupdated ${relTime}`}
+      title={`${pr.title}\n@${pr.author.login} · updated ${rel}`}
       style={{
         display: "flex",
-        flexDirection: "column",
-        gap: 5,
-        textDecoration: "none",
-        borderLeft: `3px solid ${showAge ? ageColor : "var(--border)"}`,
-        borderTop: "1px solid var(--border)",
-        borderRight: "1px solid var(--border)",
-        borderBottom: "1px solid var(--border)",
-        borderRadius: "0 4px 4px 0",
-        padding: "7px 10px",
+        gap: 9,
+        padding: "9px 11px",
         background: "var(--bg-card)",
-        minWidth: 180,
-        maxWidth: 240,
+        border: "1px solid var(--border)",
+        borderRadius: 7,
+        minWidth: 200,
+        maxWidth: 260,
         flexShrink: 0,
-        transition: "background 0.12s, border-color 0.12s",
+        textDecoration: "none",
         cursor: "pointer",
+        transition: "background 0.1s, border-color 0.1s",
       }}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLAnchorElement).style.background = "var(--bg-card-hover)";
-        (e.currentTarget as HTMLAnchorElement).style.borderTopColor = "var(--border-hover)";
+        const el = e.currentTarget as HTMLAnchorElement;
+        el.style.background = "var(--bg-card-hover)";
+        el.style.borderColor = "var(--border-strong)";
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLAnchorElement).style.background = "var(--bg-card)";
-        (e.currentTarget as HTMLAnchorElement).style.borderTopColor = "var(--border)";
+        const el = e.currentTarget as HTMLAnchorElement;
+        el.style.background = "var(--bg-card)";
+        el.style.borderColor = "var(--border)";
       }}
     >
-      {/* Row 1: number + age */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
-        <span style={{ fontSize: "0.65rem", color: "var(--accent)", fontWeight: 700 }}>
-          #{pr.number}
-        </span>
-        {showAge && (
-          <span style={{ fontSize: "0.6rem", color: ageColor, fontWeight: 600 }}>
-            {ageLabel}
-          </span>
-        )}
+      {/* Urgency / state dot */}
+      <div style={{ paddingTop: 3, flexShrink: 0 }}>
+        <div style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor }} />
       </div>
 
-      {/* Row 2: title */}
-      <span
-        style={{
-          fontSize: "0.72rem",
-          color: "var(--text-primary)",
-          lineHeight: 1.3,
-          display: "-webkit-box",
-          WebkitLineClamp: 2,
-          WebkitBoxOrient: "vertical",
-          overflow: "hidden",
-        }}
-      >
-        {pr.title}
-      </span>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+        {/* PR number + age */}
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
+          <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, fontWeight: 600, color: "var(--text-muted)", letterSpacing: "0.01em" }}>
+            #{pr.number}
+          </span>
+          {age && (
+            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, fontWeight: 600, color: dotColor, flexShrink: 0 }}>
+              {age}
+            </span>
+          )}
+        </div>
 
-      {/* Row 3: badges */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ fontSize: "0.6rem", color: "var(--text-muted)" }}>
-          @{pr.author.login}
+        {/* Title */}
+        <span style={{
+          fontSize: 12, fontWeight: 500, color: "var(--text-primary)",
+          lineHeight: 1.35, overflow: "hidden", display: "-webkit-box",
+          WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+        }}>
+          {pr.title}
         </span>
-        {details && (
-          <>
-            <span
-              style={{
-                fontSize: "0.6rem",
-                color:
-                  details.reviewState === "approved"
-                    ? "var(--review-approved)"
-                    : details.reviewState === "changes_requested"
-                    ? "var(--review-changes)"
-                    : "var(--text-faint)",
-                fontWeight: 600,
-              }}
-            >
-              {details.reviewState === "approved"
-                ? "✓"
-                : details.reviewState === "changes_requested"
-                ? "✗"
-                : "?"}
-            </span>
-            <span
-              style={{
-                fontSize: "0.6rem",
-                color:
-                  details.ciState === "success"
-                    ? "var(--ci-success)"
-                    : details.ciState === "failure"
-                    ? "var(--ci-failure)"
-                    : details.ciState === "pending"
-                    ? "var(--ci-pending)"
-                    : "var(--text-faint)",
-              }}
-            >
-              {details.ciState === "success"
-                ? "◆"
-                : details.ciState === "failure"
-                ? "◆"
-                : details.ciState === "pending"
-                ? "◇"
-                : "·"}
-            </span>
-          </>
-        )}
+
+        {/* Meta row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 1 }}>
+          <span style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 400 }}>
+            {pr.author.login}
+          </span>
+          {details && (
+            <>
+              <span style={{ color: "var(--text-muted)", fontSize: 10 }}>·</span>
+              <span style={{
+                fontSize: 10, fontWeight: 600, letterSpacing: "0.02em",
+                color: details.reviewState === "approved" ? "var(--review-approved)"
+                  : details.reviewState === "changes_requested" ? "var(--review-changes)"
+                  : "var(--text-muted)",
+              }}>
+                {details.reviewState === "approved" ? "✓ approved"
+                  : details.reviewState === "changes_requested" ? "✗ changes"
+                  : "· review"}
+              </span>
+              <span style={{ color: "var(--text-muted)", fontSize: 10 }}>·</span>
+              <span style={{
+                fontSize: 10, fontWeight: 600,
+                color: details.ciState === "success" ? "var(--ci-success)"
+                  : details.ciState === "failure" ? "var(--ci-failure)"
+                  : details.ciState === "pending" ? "var(--ci-pending)"
+                  : "var(--text-muted)",
+              }}>
+                {details.ciState === "success" ? "CI ✓"
+                  : details.ciState === "failure" ? "CI ✗"
+                  : details.ciState === "pending" ? "CI …"
+                  : ""}
+              </span>
+            </>
+          )}
+        </div>
       </div>
     </a>
   );
 }
 
-// ── Lane ──────────────────────────────────────────────────────────────────
+// ── Lane ────────────────────────────────────────────────────────────────────
 
 interface LaneProps {
   label: string;
-  prs: PrCardData[] | undefined;
+  sublabel?: string;
+  prs?: PrCardData[];
   isLoading: boolean;
-  showAge?: boolean;
+  showUrgency?: boolean;
   emptyMsg?: string;
   labelColor?: string;
-  count?: number;
 }
 
-function Lane({ label, prs, isLoading, showAge = false, emptyMsg = "none", labelColor, count }: LaneProps) {
-  const displayCount = count ?? prs?.length ?? 0;
+function Lane({ label, sublabel, prs, isLoading, showUrgency, emptyMsg = "—", labelColor }: LaneProps) {
+  const count = prs?.length ?? 0;
   return (
-    <div style={{ marginBottom: 20 }}>
-      {/* Lane header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <span
-          style={{
-            fontSize: "0.6rem",
-            fontWeight: 700,
-            letterSpacing: "0.14em",
-            textTransform: "uppercase",
-            color: labelColor ?? "var(--text-muted)",
-            flexShrink: 0,
-            minWidth: 140,
-          }}
-        >
+    <div style={{ display: "flex", gap: 0, minHeight: 56 }}>
+      {/* Fixed-width label column */}
+      <div style={{ width: 160, flexShrink: 0, paddingTop: 10, paddingRight: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: labelColor ?? "var(--text-secondary)", letterSpacing: "-0.01em" }}>
           {label}
-        </span>
-        {!isLoading && (
-          <span
-            style={{
-              fontSize: "0.58rem",
-              color: "var(--text-faint)",
-              background: "var(--bg-card)",
-              border: "1px solid var(--border)",
-              borderRadius: 2,
-              padding: "0 5px",
-              lineHeight: "16px",
-            }}
-          >
-            {displayCount}
-          </span>
+        </div>
+        {sublabel && (
+          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{sublabel}</div>
         )}
-        <div style={{ flex: 1, height: 1, background: "var(--border)", opacity: 0.4 }} />
+        {!isLoading && count > 0 && (
+          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4, fontFamily: "JetBrains Mono, monospace" }}>
+            {count}
+          </div>
+        )}
       </div>
 
-      {/* Horizontal scroll area */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "row",
-          gap: 8,
-          overflowX: "auto",
-          paddingBottom: 6,
-          paddingLeft: 148, // align with label width
-        }}
-      >
-        {isLoading &&
-          [1, 2, 3].map((i) => (
-            <div
-              key={i}
-              style={{
-                minWidth: 180,
-                height: 75,
-                borderRadius: 4,
-                background: "var(--bg-card)",
-                border: "1px solid var(--border)",
-                animation: "pulse 1.5s ease-in-out infinite",
-                flexShrink: 0,
-              }}
-            />
-          ))}
-
-        {!isLoading && (!prs || prs.length === 0) && (
-          <span style={{ fontSize: "0.68rem", color: "var(--text-faint)", fontStyle: "italic" }}>
-            — {emptyMsg}
+      {/* Scrollable chips */}
+      <div style={{
+        flex: 1,
+        display: "flex",
+        gap: 7,
+        overflowX: "auto",
+        paddingBottom: 8,
+        paddingTop: 2,
+        paddingRight: 4,
+        alignItems: "flex-start",
+        minWidth: 0,
+      }}>
+        {isLoading && [1, 2, 3].map(i => (
+          <div key={i} style={{ minWidth: 200, height: 68, borderRadius: 7, background: "var(--bg-card)", border: "1px solid var(--border)", flexShrink: 0, animation: "pulse 1.5s ease infinite" }} />
+        ))}
+        {!isLoading && count === 0 && (
+          <span style={{ fontSize: 12, color: "var(--text-muted)", paddingTop: 10, fontStyle: "italic" }}>
+            {emptyMsg}
           </span>
         )}
-
-        {!isLoading &&
-          prs?.map((pr) => <PrChip key={pr.number} pr={pr} showAge={showAge} />)}
+        {!isLoading && prs?.map(pr => (
+          <PrChip key={pr.number} pr={pr} showUrgency={showUrgency} />
+        ))}
       </div>
     </div>
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────
+// ── Section wrapper ──────────────────────────────────────────────────────────
+
+function Section({ title, badge, children }: { title: string; badge?: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8,
+        paddingBottom: 10, marginBottom: 4,
+      }}>
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+          {title}
+        </span>
+        {badge && (
+          <span style={{
+            fontSize: 10, fontFamily: "JetBrains Mono, monospace", color: "var(--text-muted)",
+            background: "rgba(255,255,255,0.04)", border: "1px solid var(--border)",
+            borderRadius: 3, padding: "0 5px", lineHeight: "16px",
+          }}>
+            {badge}
+          </span>
+        )}
+        <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+
+interface Props { refreshIntervalMs: number; myLogin: string; repo: string; }
 
 export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props) {
-  const {
-    data: myPrs,
-    error: myPrsErr,
-    isLoading: myPrsLoading,
-    mutate: mutateMyPrs,
-  } = useSWR<MyPrsResponse>("/api/my-prs", fetcher, {
-    refreshInterval: refreshIntervalMs,
-  });
+  const { data: myPrs, isLoading: myLoad, mutate: mm } =
+    useSWR<MyPrsResponse>("/api/my-prs", fetcher, { refreshInterval: refreshIntervalMs });
+  const { data: tmPrs, isLoading: tmLoad, mutate: mt } =
+    useSWR<TeammatePrsResponse>("/api/teammate-prs", fetcher, { refreshInterval: refreshIntervalMs });
+  const { data: rvPrs, isLoading: rvLoad, mutate: mr } =
+    useSWR<ReviewRequestsResponse>("/api/review-requests", fetcher, { refreshInterval: refreshIntervalMs });
 
-  const {
-    data: teammatePrs,
-    error: tmErr,
-    isLoading: tmLoading,
-    mutate: mutateTm,
-  } = useSWR<TeammatePrsResponse>("/api/teammate-prs", fetcher, {
-    refreshInterval: refreshIntervalMs,
-  });
+  const handleRefresh = useCallback(() => { mm(); mt(); mr(); }, [mm, mt, mr]);
 
-  const {
-    data: reviewReqs,
-    isLoading: reviewLoading,
-    mutate: mutateReview,
-  } = useSWR<ReviewRequestsResponse>("/api/review-requests", fetcher, {
-    refreshInterval: refreshIntervalMs,
-  });
-
-  const handleRefresh = useCallback(() => {
-    mutateMyPrs();
-    mutateTm();
-    mutateReview();
-  }, [mutateMyPrs, mutateTm, mutateReview]);
-
-  const isAnyLoading = myPrsLoading || tmLoading || reviewLoading;
+  const isLoading = myLoad || tmLoad || rvLoad;
   const lastFetchedAt = myPrs?.lastFetchedAt;
 
-  // Sort review requests by age (oldest first = most urgent)
-  const sortedReviewReqs = reviewReqs?.reviewRequests
-    ? [...reviewReqs.reviewRequests].sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-      )
+  const reviewQueue = rvPrs?.reviewRequests
+    ? [...rvPrs.reviewRequests].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt))
     : undefined;
 
-  // All teammate PRs flattened for a summary count
-  const teammateTotal = teammatePrs
-    ? Object.values(teammatePrs.byTeammate).reduce((n, prs) => n + prs.length, 0)
+  const tmTotal = tmPrs
+    ? Object.values(tmPrs.byTeammate).reduce((n, ps) => n + ps.length, 0)
     : 0;
 
   return (
-    <div style={{ minHeight: "100vh" }}>
-      <NavBar
-        repo={repo}
-        onRefresh={handleRefresh}
-        isLoading={isAnyLoading}
-        lastFetchedAt={lastFetchedAt}
-      />
+    <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <NavBar repo={repo} onRefresh={handleRefresh} isLoading={isLoading} lastFetchedAt={lastFetchedAt} />
 
-      <main style={{ padding: "24px 24px 64px", maxWidth: 1600, margin: "0 auto" }}>
-        {/* ── Section: Review Queue ── */}
-        <section style={{ marginBottom: 36, paddingBottom: 28, borderBottom: "1px solid var(--border)" }}>
-          <div style={{ marginBottom: 16 }}>
-            <span style={{ fontSize: "0.6rem", letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--text-muted)" }}>
-              review queue
-            </span>
-            {!reviewLoading && sortedReviewReqs && sortedReviewReqs.length > 0 && (
-              <span style={{ marginLeft: 8, fontSize: "0.6rem", color: "var(--state-closed)" }}>
-                ← oldest first · left border = urgency
-              </span>
-            )}
-          </div>
-          <Lane
-            label="needs your review"
-            prs={sortedReviewReqs}
-            isLoading={reviewLoading}
-            showAge
-            emptyMsg="inbox zero 🎉"
-            labelColor="var(--state-closed)"
-          />
-        </section>
+      <main style={{ flex: 1, overflowY: "auto", padding: "20px 24px 48px" }}>
 
-        {/* ── Section: My PRs ── */}
-        <section style={{ marginBottom: 36, paddingBottom: 28, borderBottom: "1px solid var(--border)" }}>
-          <div style={{ marginBottom: 16 }}>
-            <span style={{ fontSize: "0.6rem", letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--text-muted)" }}>
-              @{myLogin}
-            </span>
-          </div>
+        {/* Review queue */}
+        <Section title="Review queue" badge={reviewQueue ? String(reviewQueue.length) : undefined}>
           <Lane
-            label="active"
-            prs={myPrs?.active}
-            isLoading={myPrsLoading}
-            emptyMsg="no active PRs"
-            labelColor="var(--state-open)"
+            label="Needs your review"
+            sublabel="oldest → most urgent"
+            prs={reviewQueue}
+            isLoading={rvLoad}
+            showUrgency
+            emptyMsg="Inbox zero"
+            labelColor={reviewQueue && reviewQueue.length > 0 ? "var(--danger)" : "var(--text-secondary)"}
           />
-          <Lane
-            label="draft"
-            prs={myPrs?.drafts}
-            isLoading={myPrsLoading}
-            emptyMsg="no drafts"
-          />
-          <Lane
-            label="recently closed"
-            prs={myPrs?.recentlyClosed}
-            isLoading={myPrsLoading}
-            emptyMsg="nothing closed recently"
-          />
-        </section>
+        </Section>
 
-        {/* ── Section: Team ── */}
-        <section>
-          <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: "0.6rem", letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--text-muted)" }}>
-              team
-            </span>
-            {!tmLoading && (
-              <span style={{ fontSize: "0.6rem", color: "var(--text-faint)" }}>
-                {teammateTotal} open PRs
-              </span>
-            )}
-          </div>
-          {tmErr && (
-            <p style={{ fontSize: "0.68rem", color: "var(--state-closed)", fontStyle: "italic" }}>
-              ✕ failed to load
-            </p>
+        <div style={{ height: 24 }} />
+
+        {/* My PRs */}
+        <Section title={`@${myLogin}`}>
+          <Lane label="Active" prs={myPrs?.active} isLoading={myLoad} emptyMsg="No active PRs" labelColor="var(--success)" />
+          <Lane label="Draft" prs={myPrs?.drafts} isLoading={myLoad} emptyMsg="No drafts" />
+          <Lane label="Recently closed" prs={myPrs?.recentlyClosed} isLoading={myLoad} emptyMsg="—" />
+        </Section>
+
+        <div style={{ height: 24 }} />
+
+        {/* Team */}
+        <Section title="Team" badge={tmTotal ? String(tmTotal) : undefined}>
+          {tmLoad && [1, 2].map(i => (
+            <Lane key={i} label="…" prs={undefined} isLoading emptyMsg="" />
+          ))}
+          {!tmLoad && tmPrs && Object.keys(tmPrs.byTeammate).length === 0 && (
+            <span style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>No open team PRs</span>
           )}
-          {!tmErr &&
-            (tmLoading
-              ? [1, 2].map((i) => (
-                  <Lane key={i} label="..." prs={undefined} isLoading emptyMsg="" />
-                ))
-              : teammatePrs &&
-                Object.entries(teammatePrs.byTeammate).map(([login, prs]) => (
-                  <Lane
-                    key={login}
-                    label={`@${login}`}
-                    prs={prs}
-                    isLoading={false}
-                    emptyMsg="no open PRs"
-                  />
-                )))}
-          {!tmLoading && !tmErr && teammatePrs && Object.keys(teammatePrs.byTeammate).length === 0 && (
-            <p style={{ fontSize: "0.68rem", color: "var(--text-faint)", fontStyle: "italic" }}>
-              — no open team PRs
-            </p>
-          )}
-        </section>
+          {!tmLoad && tmPrs && Object.entries(tmPrs.byTeammate).map(([login, prs]) => (
+            <Lane key={login} label={`@${login}`} prs={prs} isLoading={false} emptyMsg="—" />
+          ))}
+        </Section>
       </main>
 
       <style>{`
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-        ::-webkit-scrollbar { height: 4px; width: 4px; }
-        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+        ::-webkit-scrollbar { height: 3px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); }
       `}</style>
     </div>
   );

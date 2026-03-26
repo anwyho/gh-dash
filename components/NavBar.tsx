@@ -4,9 +4,9 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 
 const VIEWS = [
-  { href: "/control", label: "control", title: "Control Panel" },
-  { href: "/physics", label: "physics", title: "Physics Sim" },
-  { href: "/zen", label: "zen", title: "Zen Orbital" },
+  { href: "/control", label: "Control" },
+  { href: "/physics", label: "Physics" },
+  { href: "/zen", label: "Zen" },
 ];
 
 interface Props {
@@ -21,66 +21,43 @@ export default function NavBar({ repo, onRefresh, isLoading, lastFetchedAt }: Pr
   const [, repoName] = repo.split("/");
 
   const timeLabel = lastFetchedAt
-    ? new Date(lastFetchedAt).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      })
+    ? new Date(lastFetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : null;
 
   return (
-    <header
-      style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 100,
-        background: "rgba(15, 14, 13, 0.95)",
-        backdropFilter: "blur(8px)",
-        borderBottom: "1px solid var(--border)",
-        padding: "0 24px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        height: 44,
-        gap: 16,
-      }}
-    >
-      {/* Left: brand + repo */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-        <span
-          style={{
-            fontSize: "0.75rem",
-            fontWeight: 800,
-            color: "var(--accent)",
-            letterSpacing: "0.06em",
-          }}
-        >
+    <header style={{
+      position: "sticky",
+      top: 0,
+      zIndex: 100,
+      background: "var(--bg-overlay)",
+      backdropFilter: "blur(12px)",
+      borderBottom: "1px solid var(--border)",
+      padding: "0 20px",
+      display: "flex",
+      alignItems: "center",
+      height: 44,
+      gap: 0,
+    }}>
+      {/* Brand */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, paddingRight: 20, borderRight: "1px solid var(--border)", marginRight: 20 }}>
+        <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, fontWeight: 700, color: "var(--accent)", letterSpacing: "0.02em" }}>
           gh-dash
         </span>
-        <span style={{ color: "var(--text-faint)", fontSize: "0.7rem" }}>/</span>
+        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>/</span>
         <a
           href={`https://github.com/${repo}`}
           target="_blank"
           rel="noopener noreferrer"
-          style={{
-            fontSize: "0.68rem",
-            color: "var(--text-muted)",
-            textDecoration: "none",
-            letterSpacing: "0.03em",
-          }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLAnchorElement).style.color = "var(--text-primary)")
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLAnchorElement).style.color = "var(--text-muted)")
-          }
+          style={{ fontSize: 12, fontWeight: 500, color: "var(--text-secondary)", textDecoration: "none", transition: "color 0.1s" }}
+          onMouseEnter={(e) => ((e.currentTarget as HTMLAnchorElement).style.color = "var(--text-primary)")}
+          onMouseLeave={(e) => ((e.currentTarget as HTMLAnchorElement).style.color = "var(--text-secondary)")}
         >
           {repoName}
         </a>
       </div>
 
-      {/* Center: view switcher */}
-      <nav style={{ display: "flex", alignItems: "center", gap: 2 }}>
+      {/* View switcher */}
+      <nav style={{ display: "flex", gap: 2, flex: 1 }}>
         {VIEWS.map(({ href, label }) => {
           const active = pathname === href || (pathname === "/" && href === "/control");
           return (
@@ -88,27 +65,21 @@ export default function NavBar({ repo, onRefresh, isLoading, lastFetchedAt }: Pr
               key={href}
               href={href}
               style={{
-                fontSize: "0.65rem",
-                fontWeight: active ? 700 : 400,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                color: active ? "var(--accent)" : "var(--text-muted)",
+                fontSize: 12,
+                fontWeight: active ? 600 : 400,
+                color: active ? "var(--text-primary)" : "var(--text-secondary)",
                 textDecoration: "none",
                 padding: "4px 10px",
-                borderRadius: 3,
-                background: active ? "rgba(240, 165, 0, 0.08)" : "transparent",
-                border: active ? "1px solid rgba(240, 165, 0, 0.2)" : "1px solid transparent",
-                transition: "all 0.15s",
+                borderRadius: 5,
+                background: active ? "rgba(255,255,255,0.06)" : "transparent",
+                transition: "all 0.1s",
+                letterSpacing: active ? "-0.01em" : "0",
               }}
               onMouseEnter={(e) => {
-                if (!active) {
-                  (e.currentTarget as HTMLAnchorElement).style.color = "var(--text-primary)";
-                }
+                if (!active) (e.currentTarget as HTMLAnchorElement).style.color = "var(--text-primary)";
               }}
               onMouseLeave={(e) => {
-                if (!active) {
-                  (e.currentTarget as HTMLAnchorElement).style.color = "var(--text-muted)";
-                }
+                if (!active) (e.currentTarget as HTMLAnchorElement).style.color = "var(--text-secondary)";
               }}
             >
               {label}
@@ -117,47 +88,53 @@ export default function NavBar({ repo, onRefresh, isLoading, lastFetchedAt }: Pr
         })}
       </nav>
 
-      {/* Right: sync info + refresh */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+      {/* Right: sync */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         {timeLabel && (
-          <span style={{ fontSize: "0.62rem", color: "var(--text-faint)" }}>
-            synced {timeLabel}
+          <span style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace" }}>
+            {timeLabel}
           </span>
         )}
-        {onRefresh && (
+        {isLoading && (
+          <div style={{
+            width: 14, height: 14, borderRadius: "50%",
+            border: "2px solid var(--border-strong)",
+            borderTopColor: "var(--accent)",
+            animation: "spin 0.7s linear infinite",
+          }} />
+        )}
+        {onRefresh && !isLoading && (
           <button
             onClick={onRefresh}
-            disabled={isLoading}
             style={{
               background: "transparent",
               border: "1px solid var(--border)",
-              borderRadius: 3,
-              color: isLoading ? "var(--accent)" : "var(--text-muted)",
-              cursor: isLoading ? "not-allowed" : "pointer",
-              fontSize: "0.62rem",
+              borderRadius: 5,
+              color: "var(--text-secondary)",
+              cursor: "pointer",
+              fontSize: 11,
               fontFamily: "inherit",
-              letterSpacing: "0.08em",
-              padding: "3px 8px",
-              textTransform: "uppercase",
-              transition: "color 0.15s, border-color 0.15s",
+              fontWeight: 500,
+              padding: "3px 9px",
+              transition: "all 0.1s",
             }}
             onMouseEnter={(e) => {
-              if (!isLoading) {
-                (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--accent)";
-                (e.currentTarget as HTMLButtonElement).style.color = "var(--accent)";
-              }
+              const b = e.currentTarget as HTMLButtonElement;
+              b.style.borderColor = "var(--border-strong)";
+              b.style.color = "var(--text-primary)";
             }}
             onMouseLeave={(e) => {
-              if (!isLoading) {
-                (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)";
-                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)";
-              }
+              const b = e.currentTarget as HTMLButtonElement;
+              b.style.borderColor = "var(--border)";
+              b.style.color = "var(--text-secondary)";
             }}
           >
-            {isLoading ? "↻" : "↻ sync"}
+            Sync
           </button>
         )}
       </div>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </header>
   );
 }
