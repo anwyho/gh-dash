@@ -159,11 +159,17 @@ export default function PhysicsView({ refreshIntervalMs, myLogin, repo }: Props)
       const w = canvas.width, h = canvas.height;
       if (w < 1 || h < 1) { rafRef.current = requestAnimationFrame(draw); return; }
 
-      ctx.fillStyle = "#0c0c0f";
+      // Use computed CSS variable for background (respects light/dark)
+      const style = getComputedStyle(canvas);
+      const bgColor = style.getPropertyValue("--bg").trim() || "#0c0c0f";
+      const dotGridColor = bgColor.startsWith("#f") || bgColor.startsWith("#fff")
+        ? "rgba(0,0,0,0.04)"
+        : "rgba(255,255,255,0.025)";
+      ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, w, h);
 
       // Subtle dot grid
-      ctx.fillStyle = "rgba(255,255,255,0.025)";
+      ctx.fillStyle = dotGridColor;
       const gs = 36;
       for (let x = gs; x < w; x += gs)
         for (let y = gs; y < h; y += gs) {
@@ -276,9 +282,15 @@ export default function PhysicsView({ refreshIntervalMs, myLogin, repo }: Props)
       </div>
 
       {/* Canvas container — fills all remaining space */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0 }}>
+      <div id="main-content" style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0 }}>
         <canvas
           ref={canvasRef}
+          role="img"
+          aria-label={
+            ready
+              ? `Physics simulation of ${ballsRef.current.length} pull requests. Each ball represents a PR — size indicates age. Use the list below for accessible navigation.`
+              : "Loading pull request physics simulation"
+          }
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }}
           onMouseMove={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
@@ -287,6 +299,19 @@ export default function PhysicsView({ refreshIntervalMs, myLogin, repo }: Props)
           onMouseLeave={() => { mouseRef.current = { x: -9999, y: -9999 }; setHovered(null); }}
           onClick={() => hovered && window.open(hovered.pr.htmlUrl, "_blank")}
         />
+
+        {/* Screen-reader accessible PR list (visually hidden) */}
+        {ready && (
+          <ul className="sr-only" aria-label="Pull requests (accessible list)">
+            {ballsRef.current.map((b) => (
+              <li key={b.id}>
+                <a href={b.pr.htmlUrl} target="_blank" rel="noopener noreferrer">
+                  PR #{b.pr.number}: {b.pr.title} — {b.pr.state}, by @{b.pr.author.login}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
 
         {/* Hover tooltip — Stripe card style */}
         {hovered && (

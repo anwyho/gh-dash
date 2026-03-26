@@ -42,12 +42,17 @@ function PrChip({ pr, showUrgency = false }: { pr: PrCardData; showUrgency?: boo
   const age = showUrgency ? ageLabel(pr.createdAt) : null;
   const rel = formatDistanceToNow(new Date(pr.updatedAt), { addSuffix: true });
 
+  const ageDesc = age ? `, open ${age} ago` : "";
+  const reviewDesc = details
+    ? `, review: ${details.reviewState.replace("_", " ")}, CI: ${details.ciState}`
+    : "";
+
   return (
     <a
       href={pr.htmlUrl}
       target="_blank"
       rel="noopener noreferrer"
-      title={`${pr.title}\n@${pr.author.login} · updated ${rel}`}
+      aria-label={`PR #${pr.number}: ${pr.title} by ${pr.author.login}${ageDesc}${reviewDesc} — opens on GitHub`}
       style={{
         display: "flex",
         gap: 9,
@@ -73,8 +78,8 @@ function PrChip({ pr, showUrgency = false }: { pr: PrCardData; showUrgency?: boo
         el.style.borderColor = "var(--border)";
       }}
     >
-      {/* Urgency / state dot */}
-      <div style={{ paddingTop: 3, flexShrink: 0 }}>
+      {/* Urgency / state dot — decorative, meaning conveyed via aria-label above */}
+      <div style={{ paddingTop: 3, flexShrink: 0 }} aria-hidden="true">
         <div style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor }} />
       </div>
 
@@ -170,30 +175,38 @@ function Lane({ label, sublabel, prs, isLoading, showUrgency, emptyMsg = "—", 
         )}
       </div>
 
-      {/* Scrollable chips */}
-      <div style={{
-        flex: 1,
-        display: "flex",
-        gap: 7,
-        overflowX: "auto",
-        paddingBottom: 8,
-        paddingTop: 2,
-        paddingRight: 4,
-        alignItems: "flex-start",
-        minWidth: 0,
-      }}>
+      {/* Scrollable chips — list for screen readers */}
+      <ul
+        aria-label={label}
+        aria-busy={isLoading}
+        role="list"
+        style={{
+          flex: 1,
+          display: "flex",
+          gap: 7,
+          overflowX: "auto",
+          paddingBottom: 8,
+          paddingTop: 2,
+          paddingRight: 4,
+          alignItems: "flex-start",
+          minWidth: 0,
+          listStyle: "none",
+        }}
+      >
         {isLoading && [1, 2, 3].map(i => (
-          <div key={i} style={{ minWidth: 200, height: 68, borderRadius: 7, background: "var(--bg-card)", border: "1px solid var(--border)", flexShrink: 0, animation: "pulse 1.5s ease infinite" }} />
+          <li key={i} aria-hidden="true" style={{ minWidth: 200, height: 68, borderRadius: 7, background: "var(--bg-card)", border: "1px solid var(--border)", flexShrink: 0, animation: "pulse 1.5s ease infinite" }} />
         ))}
         {!isLoading && count === 0 && (
-          <span style={{ fontSize: 12, color: "var(--text-muted)", paddingTop: 10, fontStyle: "italic" }}>
+          <li style={{ fontSize: 12, color: "var(--text-muted)", paddingTop: 10, fontStyle: "italic", listStyle: "none" }}>
             {emptyMsg}
-          </span>
+          </li>
         )}
         {!isLoading && prs?.map(pr => (
-          <PrChip key={pr.number} pr={pr} showUrgency={showUrgency} />
+          <li key={pr.number} style={{ listStyle: "none" }}>
+            <PrChip pr={pr} showUrgency={showUrgency} />
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }
@@ -257,7 +270,7 @@ export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <NavBar repo={repo} onRefresh={handleRefresh} isLoading={isLoading} lastFetchedAt={lastFetchedAt} />
 
-      <main style={{ flex: 1, overflowY: "auto", padding: "20px 24px 48px" }}>
+      <main id="main-content" style={{ flex: 1, overflowY: "auto", padding: "20px 24px 48px" }}>
 
         {/* Review queue */}
         <Section title="Review queue" badge={reviewQueue ? String(reviewQueue.length) : undefined}>

@@ -76,6 +76,7 @@ export default function ZenView({ refreshIntervalMs, myLogin, repo }: Props) {
       <NavBar repo={repo} onRefresh={handleRefresh} isLoading={isLoading} lastFetchedAt={myPrs?.lastFetchedAt} />
 
       <main
+        id="main-content"
         ref={containerRef}
         style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden", background: "var(--bg)", cursor: "default" }}
         onClick={() => setPaused(p => !p)}
@@ -86,6 +87,8 @@ export default function ZenView({ refreshIntervalMs, myLogin, repo }: Props) {
         {/* SVG orbital */}
         <svg
           viewBox={`0 0 ${size} ${size}`}
+          role="img"
+          aria-label={`Orbital diagram showing ${review.length} review requests (inner ring), ${myActive.length + myDrafts.length} of your PRs (middle ring), and ${team.length} teammate PRs (outer ring)`}
           style={{ width: "min(800px, 88vmin)", height: "min(800px, 88vmin)", position: "relative", zIndex: 1 }}
         >
           <defs>
@@ -149,12 +152,15 @@ export default function ZenView({ refreshIntervalMs, myLogin, repo }: Props) {
                     filter="url(#glow-hard)"
                   />
                 )}
-                {/* Dot */}
+                {/* Dot — keyboard + pointer accessible */}
                 <circle
                   cx={cx + item.orbitR} cy={cy}
                   r={displayR}
                   fill={isHovered ? item.color : item.color + "bb"}
                   filter={isHovered ? "url(#glow-soft)" : undefined}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`PR #${item.pr.number}: ${item.pr.title} — ${item.pr.state}, by @${item.pr.author.login}`}
                   style={{ cursor: "pointer", transition: "r 0.15s ease" }}
                   onMouseEnter={(e) => {
                     e.stopPropagation();
@@ -165,7 +171,15 @@ export default function ZenView({ refreshIntervalMs, myLogin, repo }: Props) {
                     setHoveredPr(null);
                     setPaused(false);
                   }}
+                  onFocus={() => { setHoveredPr(item.pr); setPaused(true); }}
+                  onBlur={() => { setHoveredPr(null); setPaused(false); }}
                   onClick={(e) => { e.stopPropagation(); window.open(item.pr.htmlUrl, "_blank"); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      window.open(item.pr.htmlUrl, "_blank");
+                    }
+                  }}
                 />
                 {/* Label on hover */}
                 {isHovered && (
@@ -242,9 +256,26 @@ export default function ZenView({ refreshIntervalMs, myLogin, repo }: Props) {
         )}
 
         {/* Status hint */}
-        <div style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", fontSize: 11, color: "var(--text-muted)", letterSpacing: "0.02em", pointerEvents: "none", whiteSpace: "nowrap" }}>
+        <p
+          aria-live="polite"
+          style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", fontSize: 11, color: "var(--text-muted)", letterSpacing: "0.02em", pointerEvents: "none", whiteSpace: "nowrap" }}
+        >
           {paused ? "Click to resume" : "Hover to inspect · Click to pause"}
-        </div>
+        </p>
+
+        {/* Screen-reader accessible PR list (visually hidden) */}
+        {items.length > 0 && (
+          <ul className="sr-only" aria-label="All pull requests in orbital view">
+            {items.map((item) => (
+              <li key={`${item.ring}-${item.pr.number}`}>
+                <a href={item.pr.htmlUrl} target="_blank" rel="noopener noreferrer">
+                  PR #{item.pr.number}: {item.pr.title} — {item.pr.state}, by @{item.pr.author.login}
+                  {item.ring === "inner" ? " (needs your review)" : ""}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
       </main>
     </div>
   );
