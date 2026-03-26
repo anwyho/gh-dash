@@ -23,369 +23,302 @@ function ageLabel(createdAt: string) {
 }
 
 const STATE_COLOR: Record<string, string> = {
-  draft: "var(--state-draft)",
-  open: "var(--state-open)",
+  draft:  "var(--state-draft)",
+  open:   "var(--state-open)",
   merged: "var(--state-merged)",
   closed: "var(--state-closed)",
 };
 
-// ── Hidden PRs (localStorage) ─────────────────────────────────────────────────
+function cleanBody(body: string | null | undefined): string {
+  if (!body) return "";
+  return body
+    .replace(/<!--[\s\S]*?-->/g, "")   // strip HTML comments
+    .replace(/^#{1,6}\s+/gm, "")       // strip markdown headings
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // flatten links
+    .trim();
+}
 
-const LS_KEY = "gh-dash:hidden-prs";
+// ── localStorage hooks ────────────────────────────────────────────────────────
 
-function useHiddenPrs() {
-  const [hidden, setHidden] = useState<Set<number>>(() => {
+function useLocalSet(key: string) {
+  const [set, setSet] = useState<Set<number>>(() => {
     if (typeof window === "undefined") return new Set();
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      return new Set(raw ? (JSON.parse(raw) as number[]) : []);
-    } catch { return new Set(); }
+    try { return new Set(JSON.parse(localStorage.getItem(key) ?? "[]") as number[]); }
+    catch { return new Set(); }
   });
-
-  const hide = useCallback((n: number) => {
-    setHidden(prev => {
-      const next = new Set(prev);
-      next.add(n);
-      localStorage.setItem(LS_KEY, JSON.stringify([...next]));
-      return next;
-    });
-  }, []);
-
-  const show = useCallback((n: number) => {
-    setHidden(prev => {
-      const next = new Set(prev);
-      next.delete(n);
-      localStorage.setItem(LS_KEY, JSON.stringify([...next]));
-      return next;
-    });
-  }, []);
-
-  const clearAll = useCallback(() => {
-    setHidden(new Set());
-    localStorage.removeItem(LS_KEY);
-  }, []);
-
-  return { hidden, hide, show, clearAll };
+  const add = useCallback((n: number) => setSet(prev => {
+    const next = new Set(prev); next.add(n);
+    localStorage.setItem(key, JSON.stringify([...next])); return next;
+  }), [key]);
+  const remove = useCallback((n: number) => setSet(prev => {
+    const next = new Set(prev); next.delete(n);
+    localStorage.setItem(key, JSON.stringify([...next])); return next;
+  }), [key]);
+  const clear = useCallback(() => {
+    setSet(new Set()); localStorage.removeItem(key);
+  }, [key]);
+  return { set, add, remove, clear };
 }
 
-// ── Popover (fixed-position hover card) ───────────────────────────────────────
+// ── Popover ────────────────────────────────────────────────────────────────────
 
-interface PopoverInfo {
-  pr: PrCardData;
-  details: PrDetails | undefined;
-  rect: DOMRect;
-}
+interface PopoverInfo { pr: PrCardData; details: PrDetails | undefined; rect: DOMRect; }
 
 function Popover({ info }: { info: PopoverInfo }) {
   const { pr, details, rect } = info;
+  const W = 340, PAD = 10;
+  const top = rect.bottom + PAD + 400 > (typeof window !== "undefined" ? window.innerHeight : 900)
+    ? Math.max(PAD, rect.top - 400 - PAD) : rect.bottom + PAD;
+  const left = Math.min(rect.left, (typeof window !== "undefined" ? window.innerWidth : 1440) - W - PAD);
 
-  // Position: below chip by default, flip above if near bottom
-  const POPOVER_H = 320;
-  const POPOVER_W = 320;
-  const PAD = 10;
-  const top = rect.bottom + PAD + POPOVER_H > window.innerHeight
-    ? Math.max(PAD, rect.top - POPOVER_H - PAD)
-    : rect.bottom + PAD;
-  const left = Math.min(rect.left, window.innerWidth - POPOVER_W - PAD);
-
-  const reviewColor =
-    details?.reviewState === "approved" ? "var(--review-approved)"
-    : details?.reviewState === "changes_requested" ? "var(--review-changes)"
-    : "var(--text-muted)";
-  const ciColor =
-    details?.ciState === "success" ? "var(--ci-success)"
-    : details?.ciState === "failure" ? "var(--ci-failure)"
-    : details?.ciState === "pending" ? "var(--ci-pending)"
-    : "var(--text-muted)";
-
-  const body = details?.body
-    ?.replace(/<!--[\s\S]*?-->/g, "")
-    .trim();
+  const body = cleanBody(pr.title && details?.body !== undefined ? details?.body : undefined);
 
   return (
-    <div
-      className="popover"
-      style={{ top, left, width: POPOVER_W }}
-      role="tooltip"
-    >
+    <div className="popover" style={{ top, left, width: W }} role="tooltip">
       <div className="popover-header">
         <span className="popover-number">#{pr.number}</span>
-        <span className="popover-state" style={{ color: STATE_COLOR[pr.state] ?? "var(--text-muted)" }}>
-          {pr.state}
-        </span>
+        <span className="popover-state" style={{ color: STATE_COLOR[pr.state] }}>{pr.state}</span>
         {pr.labels.map(l => (
-          <span key={l.id} className="popover-label" style={{ background: `#${l.color}` }}>
-            {l.name}
-          </span>
+          <span key={l.id} className="popover-label" style={{ background: `#${l.color}` }}>{l.name}</span>
         ))}
       </div>
-
       <p className="popover-title">{pr.title}</p>
-
       <div className="popover-meta">
-        <Row label="Author" value={`@${pr.author.login}`} />
-        <Row label="Updated" value={formatDistanceToNow(new Date(pr.updatedAt), { addSuffix: true })} />
-        <Row label="Opened" value={formatDistanceToNow(new Date(pr.createdAt), { addSuffix: true })} />
-        {details && (
-          <>
-            <Row
-              label="Review"
-              value={details.reviewState.replace("_", " ")}
-              valueColor={reviewColor}
-            />
-            <Row
-              label="CI"
-              value={details.ciState}
-              valueColor={ciColor}
-            />
-          </>
-        )}
+        {[
+          ["Author", `@${pr.author.login}`],
+          ["Updated", formatDistanceToNow(new Date(pr.updatedAt), { addSuffix: true })],
+          ["Opened", formatDistanceToNow(new Date(pr.createdAt), { addSuffix: true })],
+          ...(details ? [
+            ["Review", details.reviewState.replace("_", " ")],
+            ["CI", details.ciState],
+            ["Changes", `+${details.additions} −${details.deletions} · ${details.changedFiles} files`],
+          ] : []),
+        ].map(([l, v]) => (
+          <div key={l} className="popover-row">
+            <span className="popover-row-label">{l}</span>
+            <span className="popover-row-value">{v}</span>
+          </div>
+        ))}
       </div>
-
-      {body && (
-        <p className="popover-body">{body.slice(0, 500)}{body.length > 500 ? "…" : ""}</p>
+      {details?.body && (
+        <p className="popover-body">{cleanBody(details.body)}</p>
       )}
-
       <p className="popover-hint">Click to open on GitHub →</p>
     </div>
   );
 }
 
-function Row({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
-  return (
-    <div className="popover-row">
-      <span className="popover-row-label">{label}</span>
-      <span className="popover-row-value" style={valueColor ? { color: valueColor } : undefined}>{value}</span>
-    </div>
-  );
-}
+// ── Card (fixed height, uniform) ──────────────────────────────────────────────
 
-// ── PrChip ────────────────────────────────────────────────────────────────────
+const CARD_H = 148; // px — every card is this height
 
-interface PrChipProps {
+interface CardProps {
   pr: PrCardData;
-  showUrgency?: boolean;
   details?: PrDetails;
+  showUrgency?: boolean;
+  starred: boolean;
+  hidden: boolean;
   onHover: (info: PopoverInfo) => void;
   onHoverEnd: () => void;
+  onStar: (n: number) => void;
   onHide: (n: number) => void;
 }
 
-function PrChip({ pr, showUrgency, details, onHover, onHoverEnd, onHide }: PrChipProps) {
-  const chipRef = useRef<HTMLAnchorElement>(null);
+function PrCard({ pr, details, showUrgency, starred, onHover, onHoverEnd, onStar, onHide }: CardProps) {
+  const ref = useRef<HTMLAnchorElement>(null);
   const dotColor = showUrgency ? ageColor(pr.createdAt) : STATE_COLOR[pr.state];
   const age = showUrgency ? ageLabel(pr.createdAt) : null;
 
   const reviewLabel =
-    details?.reviewState === "approved" ? "✓ approved"
-    : details?.reviewState === "changes_requested" ? "✗ changes"
-    : null;
+    details?.reviewState === "approved" ? "✓" :
+    details?.reviewState === "changes_requested" ? "✗" : null;
   const reviewColor =
-    details?.reviewState === "approved" ? "var(--review-approved)"
-    : details?.reviewState === "changes_requested" ? "var(--review-changes)"
-    : "var(--text-muted)";
+    details?.reviewState === "approved" ? "var(--review-approved)" : "var(--review-changes)";
   const ciLabel =
-    details?.ciState === "success" ? "CI ✓"
-    : details?.ciState === "failure" ? "CI ✗"
-    : details?.ciState === "pending" ? "CI …"
-    : null;
+    details?.ciState === "success" ? "◆" :
+    details?.ciState === "failure" ? "◆" :
+    details?.ciState === "pending" ? "◇" : null;
   const ciColor =
-    details?.ciState === "success" ? "var(--ci-success)"
-    : details?.ciState === "failure" ? "var(--ci-failure)"
-    : "var(--ci-pending)";
+    details?.ciState === "success" ? "var(--ci-success)" :
+    details?.ciState === "failure" ? "var(--ci-failure)" :
+    "var(--ci-pending)";
 
-  const handleMouseEnter = useCallback(() => {
-    const rect = chipRef.current?.getBoundingClientRect();
+  const body = cleanBody(details?.body);
+
+  const handleEnter = useCallback(() => {
+    const rect = ref.current?.getBoundingClientRect();
     if (rect) onHover({ pr, details, rect });
   }, [pr, details, onHover]);
 
   return (
-    <div className="pr-chip-wrap">
+    <div className={`pr-card-wrap${starred ? " pr-card-wrap--starred" : ""}`}>
       <a
-        ref={chipRef}
+        ref={ref}
         href={pr.htmlUrl}
         target="_blank"
         rel="noopener noreferrer"
         aria-label={`PR #${pr.number}: ${pr.title}`}
-        className="pr-chip"
-        onMouseEnter={handleMouseEnter}
+        className="pr-card"
+        style={{ height: CARD_H }}
+        onMouseEnter={handleEnter}
         onMouseLeave={onHoverEnd}
       >
-        <div className="pr-chip-body">
-          {/* Row 1: number + state dot + age + CI/review */}
-          <div className="pr-chip-header">
-            <span className="pr-chip-number">#{pr.number}</span>
-            <div aria-hidden="true" className="pr-chip-dot" style={{ background: dotColor }} />
-            {age && <span className="pr-chip-age" style={{ color: dotColor }}>{age}</span>}
-            <span className="pr-chip-header-right">
-              {reviewLabel && <span className="pr-chip-status" style={{ color: reviewColor }}>{reviewLabel}</span>}
-              {ciLabel && <span className="pr-chip-status" style={{ color: ciColor }}>{ciLabel}</span>}
+        {/* Row 1 — meta */}
+        <div className="pr-card-meta">
+          <span className="pr-card-number">#{pr.number}</span>
+          <div aria-hidden="true" className="pr-card-dot" style={{ background: dotColor }} />
+          {age && <span className="pr-card-age" style={{ color: dotColor }}>{age}</span>}
+          <span className="pr-card-badges">
+            {reviewLabel && <span style={{ color: reviewColor, fontSize: 10, fontWeight: 700 }}>{reviewLabel}</span>}
+            {ciLabel && <span style={{ color: ciColor, fontSize: 10 }}>{ciLabel}</span>}
+          </span>
+        </div>
+
+        {/* Row 2 — title */}
+        <div className="pr-card-title">{pr.title}</div>
+
+        {/* Row 3 — description (fixed 3-line block) */}
+        <div className="pr-card-desc">
+          {body || <span className="pr-card-nodesc">No description</span>}
+        </div>
+
+        {/* Row 4 — footer */}
+        <div className="pr-card-footer">
+          <span className="pr-card-author">{pr.author.login}</span>
+          {details && details.changedFiles > 0 && (
+            <span className="pr-card-diff">
+              <span style={{ color: "var(--add-color)" }}>+{details.additions}</span>
+              <span style={{ color: "var(--text-muted)" }}>/</span>
+              <span style={{ color: "var(--del-color)" }}>−{details.deletions}</span>
+              <span style={{ color: "var(--text-muted)" }}> {details.changedFiles}f</span>
             </span>
-          </div>
-          {/* Row 2: title (clamped to 1 line) */}
-          <span className="pr-chip-title">{pr.title}</span>
-          {/* Row 3: author + diff stats */}
-          <div className="pr-chip-meta">
-            <span className="pr-chip-author">{pr.author.login}</span>
-            {details && details.changedFiles > 0 && (
-              <>
-                <span aria-hidden="true" className="pr-chip-sep">·</span>
-                <span className="pr-chip-diff">
-                  <span style={{ color: "var(--add-color)" }}>+{details.additions}</span>
-                  <span style={{ color: "var(--text-muted)" }}>/</span>
-                  <span style={{ color: "var(--del-color)" }}>−{details.deletions}</span>
-                  <span style={{ color: "var(--text-muted)" }}> {details.changedFiles}f</span>
-                </span>
-              </>
-            )}
-          </div>
+          )}
         </div>
       </a>
-      <button
-        type="button"
-        className="pr-chip-hide"
-        aria-label={`Hide PR #${pr.number}`}
-        onClick={e => { e.stopPropagation(); onHoverEnd(); onHide(pr.number); }}
-        tabIndex={-1}
-      >
-        ×
-      </button>
+
+      {/* Action buttons — outside <a> to avoid nested interactive elements */}
+      <div className="pr-card-actions">
+        <button
+          type="button"
+          className={`pr-card-star${starred ? " pr-card-star--on" : ""}`}
+          aria-label={starred ? `Unstar PR #${pr.number}` : `Star PR #${pr.number}`}
+          aria-pressed={starred}
+          onClick={() => onStar(pr.number)}
+        >
+          {starred ? "★" : "☆"}
+        </button>
+        <button
+          type="button"
+          className="pr-card-hide"
+          aria-label={`Hide PR #${pr.number}`}
+          onClick={() => { onHoverEnd(); onHide(pr.number); }}
+        >
+          ×
+        </button>
+      </div>
     </div>
   );
 }
 
-// ── Lane ──────────────────────────────────────────────────────────────────────
+// ── Section grid ──────────────────────────────────────────────────────────────
 
-interface LaneProps {
-  label: string;
-  sublabel?: string;
+interface SectionProps {
+  title: string;
+  badge?: number;
   prs?: PrCardData[];
   detailsMap?: Record<number, PrDetails>;
-  hiddenPrs: Set<number>;
+  hidden: Set<number>;
+  starred: Set<number>;
   isLoading: boolean;
   showUrgency?: boolean;
   emptyMsg?: string;
   labelColor?: string;
   onHover: (info: PopoverInfo) => void;
   onHoverEnd: () => void;
+  onStar: (n: number) => void;
   onHide: (n: number) => void;
 }
 
-function Lane({
-  label, sublabel, prs, detailsMap, hiddenPrs, isLoading,
+function GridSection({
+  title, badge, prs, detailsMap, hidden, starred, isLoading,
   showUrgency, emptyMsg = "—", labelColor,
-  onHover, onHoverEnd, onHide,
-}: LaneProps) {
-  const visible = prs?.filter(p => !hiddenPrs.has(p.number));
+  onHover, onHoverEnd, onStar, onHide,
+}: SectionProps) {
+  const visible = prs?.filter(p => !hidden.has(p.number));
   const count = visible?.length ?? 0;
+  const sortedVisible = visible
+    ? [...visible].sort((a, b) => (starred.has(b.number) ? 1 : 0) - (starred.has(a.number) ? 1 : 0))
+    : undefined;
 
   return (
-    <div className="lane">
-      <div className="lane-label-col">
-        <div className="lane-label" style={{ color: labelColor ?? "var(--text-secondary)" }}>{label}</div>
-        {sublabel && <div className="lane-sublabel">{sublabel}</div>}
-        {!isLoading && count > 0 && <div className="lane-count">{count}</div>}
+    <section className="grid-section">
+      <div className="grid-section-header">
+        <span className="grid-section-title" style={{ color: labelColor }}>{title}</span>
+        {!isLoading && count > 0 && <span className="grid-section-badge">{badge ?? count}</span>}
+        <div className="grid-section-rule" />
       </div>
-      <div className="lane-chips" aria-label={label} aria-busy={isLoading}>
-        {isLoading
-          ? [1, 2, 3].map(i => <div key={i} aria-hidden="true" className="chip-skeleton" />)
-          : count === 0
-          ? <span className="lane-empty">{emptyMsg}</span>
-          : visible!.map(pr => (
-              <PrChip
-                key={pr.number}
-                pr={pr}
-                showUrgency={showUrgency}
-                details={detailsMap?.[pr.number]}
-                onHover={onHover}
-                onHoverEnd={onHoverEnd}
-                onHide={onHide}
-              />
-            ))
-        }
-      </div>
-    </div>
+      {isLoading ? (
+        <div className="pr-grid">
+          {[1, 2, 3, 4].map(i => (
+            <div key={i} className="pr-card-skeleton" style={{ height: CARD_H }} aria-hidden="true" />
+          ))}
+        </div>
+      ) : count === 0 ? (
+        <p className="grid-empty">{emptyMsg}</p>
+      ) : (
+        <div className="pr-grid">
+          {sortedVisible!.map(pr => (
+            <PrCard
+              key={pr.number}
+              pr={pr}
+              details={detailsMap?.[pr.number]}
+              showUrgency={showUrgency}
+              starred={starred.has(pr.number)}
+              hidden={hidden.has(pr.number)}
+              onHover={onHover}
+              onHoverEnd={onHoverEnd}
+              onStar={onStar}
+              onHide={onHide}
+            />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
-// ── Section ───────────────────────────────────────────────────────────────────
+// ── Hidden section ─────────────────────────────────────────────────────────────
 
-function Section({ title, badge, children }: { title: string; badge?: string; children: React.ReactNode }) {
-  return (
-    <div className="section">
-      <div className="section-header">
-        <span className="section-title">{title}</span>
-        {badge && <span className="section-badge">{badge}</span>}
-        <div className="section-rule" />
-      </div>
-      {children}
-    </div>
-  );
-}
-
-// ── Hidden section ────────────────────────────────────────────────────────────
-
-function HiddenSection({
-  prs, detailsMap, hidden, onShow, onClear,
+function HiddenDrawer({
+  allPrs, detailsMap, hidden, starred, onShow, onClear, onStar,
 }: {
-  prs: PrCardData[];
+  allPrs: PrCardData[];
   detailsMap?: Record<number, PrDetails>;
   hidden: Set<number>;
+  starred: Set<number>;
   onShow: (n: number) => void;
   onClear: () => void;
+  onStar: (n: number) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const hiddenPrs = prs.filter(p => hidden.has(p.number));
+  const hiddenPrs = allPrs.filter(p => hidden.has(p.number));
   if (hiddenPrs.length === 0) return null;
-
   return (
-    <div className="hidden-section">
-      <button
-        type="button"
-        className="hidden-toggle"
-        onClick={() => setOpen(o => !o)}
-        aria-expanded={open}
-      >
+    <div className="hidden-drawer">
+      <button type="button" className="hidden-toggle" onClick={() => setOpen(o => !o)} aria-expanded={open}>
         <span>{open ? "▾" : "▸"} Hidden ({hiddenPrs.length})</span>
-        <button
-          type="button"
-          className="hidden-clear"
-          onClick={e => { e.stopPropagation(); onClear(); }}
-          aria-label="Restore all hidden PRs"
-        >
-          restore all
-        </button>
+        <button type="button" className="hidden-clear" onClick={e => { e.stopPropagation(); onClear(); }}>restore all</button>
       </button>
       {open && (
-        <div className="hidden-chips">
-          {hiddenPrs.map(pr => {
-            const d = detailsMap?.[pr.number];
-            return (
-              <div key={pr.number} className="hidden-chip">
-                <span className="hidden-chip-num">#{pr.number}</span>
-                <span className="hidden-chip-title">{pr.title}</span>
-                {d && (
-                  <span
-                    className="hidden-chip-status"
-                    style={{
-                      color: d.ciState === "success" ? "var(--ci-success)"
-                        : d.ciState === "failure" ? "var(--ci-failure)" : "var(--text-muted)"
-                    }}
-                  >
-                    {d.ciState === "success" ? "◆" : d.ciState === "failure" ? "◆" : "◇"}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className="hidden-chip-restore"
-                  onClick={() => onShow(pr.number)}
-                  aria-label={`Restore PR #${pr.number}`}
-                >
-                  ↩
-                </button>
-              </div>
-            );
-          })}
+        <div className="hidden-list">
+          {hiddenPrs.map(pr => (
+            <div key={pr.number} className="hidden-row">
+              <span className="hidden-num">#{pr.number}</span>
+              <span className="hidden-title">{pr.title}</span>
+              <button type="button" className={`hidden-star${starred.has(pr.number) ? " hidden-star--on" : ""}`} onClick={() => onStar(pr.number)}>{starred.has(pr.number) ? "★" : "☆"}</button>
+              <button type="button" className="hidden-restore" onClick={() => onShow(pr.number)} aria-label={`Restore PR #${pr.number}`}>↩</button>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -394,11 +327,15 @@ function HiddenSection({
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+type Tab = "mine" | "review";
+
 interface Props { refreshIntervalMs: number; myLogin: string; repo: string; }
 
 export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props) {
+  const [tab, setTab] = useState<Tab>("mine");
   const { myPrs, tmPrs, rvPrs, detailsMap, isLoading, refresh } = useDashboardData(refreshIntervalMs);
-  const { hidden, hide, show, clearAll } = useHiddenPrs();
+  const { set: hidden, add: hide, remove: show, clear: clearHidden } = useLocalSet("gh-dash:hidden-prs");
+  const { set: starred, add: star, remove: unstar } = useLocalSet("gh-dash:starred-prs");
   const [popover, setPopover] = useState<PopoverInfo | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -406,19 +343,14 @@ export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props
     if (hideTimer.current) clearTimeout(hideTimer.current);
     setPopover(info);
   }, []);
-
   const onHoverEnd = useCallback(() => {
-    hideTimer.current = setTimeout(() => setPopover(null), 120);
+    hideTimer.current = setTimeout(() => setPopover(null), 150);
   }, []);
+  useEffect(() => () => { if (hideTimer.current) clearTimeout(hideTimer.current); }, []);
 
-  // Re-position popover when it re-renders (window resize)
-  useEffect(() => {
-    return () => { if (hideTimer.current) clearTimeout(hideTimer.current); };
-  }, []);
-
-  const tmTotal = tmPrs
-    ? Object.values(tmPrs.byTeammate).reduce((n, ps) => n + ps.length - ps.filter(p => hidden.has(p.number)).length, 0)
-    : 0;
+  const toggleStar = useCallback((n: number) => {
+    starred.has(n) ? unstar(n) : star(n);
+  }, [starred, star, unstar]);
 
   const reviewQueue = useMemo(() =>
     rvPrs?.reviewRequests
@@ -427,10 +359,8 @@ export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props
     [rvPrs]
   );
 
-  // All PRs for the hidden section
   const allPrs = useMemo(() => {
-    const seen = new Set<number>();
-    const result: PrCardData[] = [];
+    const seen = new Set<number>(); const result: PrCardData[] = [];
     const add = (arr?: PrCardData[]) => arr?.forEach(p => { if (!seen.has(p.number)) { seen.add(p.number); result.push(p); } });
     add(myPrs?.active); add(myPrs?.drafts); add(myPrs?.recentlyClosed);
     add(rvPrs?.reviewRequests);
@@ -438,140 +368,187 @@ export default function ControlPanel({ refreshIntervalMs, myLogin, repo }: Props
     return result;
   }, [myPrs, rvPrs, tmPrs]);
 
-  const laneProps = { detailsMap, hiddenPrs: hidden, isLoading, onHover, onHoverEnd, onHide: hide };
+  const cardProps = { detailsMap, hidden, starred, isLoading: false, onHover, onHoverEnd, onStar: toggleStar, onHide: hide };
+  const reviewVisibleCount = reviewQueue?.filter(p => !hidden.has(p.number)).length ?? 0;
 
   return (
     <div className="view-root">
       <NavBar repo={repo} onRefresh={refresh} isLoading={isLoading} lastFetchedAt={myPrs?.lastFetchedAt} />
 
+      {/* ── Tab bar ── */}
+      <div className="tab-bar" role="tablist" aria-label="Dashboard views">
+        <button
+          role="tab" type="button"
+          aria-selected={tab === "mine"}
+          className={`tab-btn${tab === "mine" ? " tab-btn--active" : ""}`}
+          onClick={() => setTab("mine")}
+        >
+          My PRs
+          {!isLoading && myPrs && (
+            <span className="tab-badge">
+              {(myPrs.active?.filter(p => !hidden.has(p.number)).length ?? 0) +
+               (myPrs.drafts?.filter(p => !hidden.has(p.number)).length ?? 0)}
+            </span>
+          )}
+        </button>
+        <button
+          role="tab" type="button"
+          aria-selected={tab === "review"}
+          className={`tab-btn${tab === "review" ? " tab-btn--active" : ""}`}
+          onClick={() => setTab("review")}
+        >
+          Review Queue
+          {!isLoading && reviewVisibleCount > 0 && (
+            <span className="tab-badge tab-badge--urgent">{reviewVisibleCount}</span>
+          )}
+        </button>
+      </div>
+
       <main id="main-content" className="control-main">
-        {/* ── @me first ── */}
-        <Section title={`@${myLogin}`}>
-          <Lane label="Active" prs={myPrs?.active} {...laneProps} emptyMsg="No active PRs" labelColor="var(--success)" />
-          <Lane label="Draft" prs={myPrs?.drafts} {...laneProps} emptyMsg="No drafts" />
-          <Lane label="Recently closed" prs={myPrs?.recentlyClosed} {...laneProps} emptyMsg="—" />
-        </Section>
 
-        <div className="section-gap" />
+        {/* ── My PRs tab ── */}
+        {tab === "mine" && (
+          <>
+            {starred.size > 0 && (
+              <GridSection title="Starred" badge={[...(myPrs?.active ?? []), ...(myPrs?.drafts ?? []), ...(myPrs?.recentlyClosed ?? [])].filter(p => starred.has(p.number) && !hidden.has(p.number)).length}
+                prs={allPrs.filter(p => starred.has(p.number))}
+                {...cardProps} isLoading={isLoading} labelColor="var(--warning)"
+                emptyMsg="—"
+              />
+            )}
+            <GridSection title="Active" prs={myPrs?.active} {...cardProps} isLoading={isLoading} labelColor="var(--success)" emptyMsg="No active PRs" />
+            <GridSection title="Draft" prs={myPrs?.drafts} {...cardProps} isLoading={isLoading} emptyMsg="No drafts" />
+            <GridSection title="Recently closed" prs={myPrs?.recentlyClosed} {...cardProps} isLoading={isLoading} emptyMsg="—" />
+          </>
+        )}
 
-        {/* ── Review queue ── */}
-        <Section title="Review queue" badge={reviewQueue?.filter(p => !hidden.has(p.number)).length ? String(reviewQueue!.filter(p => !hidden.has(p.number)).length) : undefined}>
-          <Lane
-            label="Needs your review"
-            sublabel="oldest → most urgent"
-            prs={reviewQueue}
-            {...laneProps}
-            showUrgency
-            emptyMsg="Inbox zero"
-            labelColor={reviewQueue?.some(p => !hidden.has(p.number)) ? "var(--danger)" : undefined}
-          />
-        </Section>
+        {/* ── Review Queue tab ── */}
+        {tab === "review" && (
+          <>
+            <GridSection
+              title="Needs your review"
+              prs={reviewQueue}
+              {...cardProps} isLoading={rvPrs === undefined}
+              showUrgency
+              emptyMsg="Inbox zero"
+              labelColor={reviewVisibleCount > 0 ? "var(--danger)" : undefined}
+            />
+            {tmPrs && Object.entries(tmPrs.byTeammate).map(([login, prs]) => (
+              <GridSection key={login} title={`@${login}`} prs={prs} {...cardProps} isLoading={false} emptyMsg="—" />
+            ))}
+          </>
+        )}
 
-        <div className="section-gap" />
-
-        {/* ── Team ── */}
-        <Section title="Team" badge={tmTotal ? String(tmTotal) : undefined}>
-          {isLoading
-            ? [1, 2].map(i => <Lane key={i} label="…" {...laneProps} emptyMsg="" />)
-            : tmPrs && Object.entries(tmPrs.byTeammate).map(([login, prs]) => (
-                <Lane key={login} label={`@${login}`} prs={prs} {...laneProps} emptyMsg="—" />
-              ))
-          }
-        </Section>
-
-        <div className="section-gap" />
-
-        {/* ── Hidden PRs ── */}
-        <HiddenSection
-          prs={allPrs}
-          detailsMap={detailsMap}
-          hidden={hidden}
-          onShow={show}
-          onClear={clearAll}
+        <HiddenDrawer
+          allPrs={allPrs} detailsMap={detailsMap}
+          hidden={hidden} starred={starred}
+          onShow={show} onClear={clearHidden} onStar={toggleStar}
         />
       </main>
 
-      {/* ── Floating popover ── */}
       {popover && (
-        <div
-          onMouseEnter={() => { if (hideTimer.current) clearTimeout(hideTimer.current); }}
-          onMouseLeave={onHoverEnd}
-        >
+        <div onMouseEnter={() => { if (hideTimer.current) clearTimeout(hideTimer.current); }} onMouseLeave={onHoverEnd}>
           <Popover info={popover} />
         </div>
       )}
 
       <style>{`
         .view-root { height:100vh; display:flex; flex-direction:column; overflow:hidden; }
-        .control-main { flex:1; overflow-y:auto; padding:20px 24px 48px; }
 
-        .section { margin-bottom:8px; }
-        .section-header { display:flex; align-items:center; gap:8px; padding-bottom:10px; margin-bottom:4px; }
-        .section-title { font-size:10px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--text-muted); }
-        .section-badge { font-size:10px; font-family:'JetBrains Mono',monospace; color:var(--text-muted); background:var(--bg-card); border:1px solid var(--border); border-radius:3px; padding:0 5px; line-height:16px; }
-        .section-rule { flex:1; height:1px; background:var(--border); }
-        .section-gap { height:24px; }
+        /* Tab bar */
+        .tab-bar { display:flex; gap:0; border-bottom:1px solid var(--border); background:var(--bg-subtle); padding:0 20px; flex-shrink:0; }
+        .tab-btn { background:transparent; border:none; border-bottom:2px solid transparent; color:var(--text-secondary); cursor:pointer; font-size:12px; font-family:inherit; font-weight:500; padding:10px 14px; display:flex; align-items:center; gap:6px; transition:color .1s,border-color .1s; margin-bottom:-1px; }
+        .tab-btn:hover { color:var(--text-primary); }
+        .tab-btn--active { color:var(--text-primary); font-weight:600; border-bottom-color:var(--accent); }
+        .tab-badge { font-family:'JetBrains Mono',monospace; font-size:10px; background:var(--bg-card); border:1px solid var(--border); border-radius:10px; padding:0 6px; color:var(--text-secondary); }
+        .tab-badge--urgent { background:var(--danger-dim); border-color:var(--danger); color:var(--danger); }
 
-        .lane { display:flex; min-height:40px; margin-bottom:6px; }
-        .lane-label-col { width:148px; flex-shrink:0; padding-top:8px; padding-right:16px; }
-        .lane-label { font-size:11px; font-weight:600; letter-spacing:-.01em; }
-        .lane-sublabel { font-size:10px; color:var(--text-muted); margin-top:2px; }
-        .lane-count { font-size:10px; color:var(--text-muted); margin-top:3px; font-family:'JetBrains Mono',monospace; }
-        .lane-chips { flex:1; display:flex; flex-wrap:wrap; gap:7px; padding-bottom:4px; align-items:flex-start; min-width:0; }
-        .lane-empty { font-size:12px; color:var(--text-muted); padding-top:8px; font-style:italic; }
+        .control-main { flex:1; overflow-y:auto; padding:20px 20px 48px; display:flex; flex-direction:column; gap:0; }
 
-        .chip-skeleton { width:240px; height:64px; border-radius:7px; background:var(--bg-card); border:1px solid var(--border); animation:pulse 1.5s ease infinite; }
+        /* Section */
+        .grid-section { margin-bottom:24px; }
+        .grid-section-header { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+        .grid-section-title { font-size:10px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:var(--text-muted); }
+        .grid-section-badge { font-size:10px; font-family:'JetBrains Mono',monospace; color:var(--text-muted); background:var(--bg-card); border:1px solid var(--border); border-radius:3px; padding:0 5px; line-height:16px; }
+        .grid-section-rule { flex:1; height:1px; background:var(--border); }
+        .grid-empty { font-size:12px; color:var(--text-muted); font-style:italic; padding:4px 0; }
 
-        /* Chip wrap — position:relative for hide button */
-        .pr-chip-wrap { position:relative; display:inline-flex; }
-        .pr-chip-hide { position:absolute; top:4px; right:4px; background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:14px; line-height:1; padding:1px 4px; border-radius:3px; opacity:0; transition:opacity .1s,color .1s; }
-        .pr-chip-wrap:hover .pr-chip-hide { opacity:1; }
-        .pr-chip-hide:hover { color:var(--danger); }
+        /* Grid */
+        .pr-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:8px; }
 
-        /* Uniform-height chip: fixed 72px, all rows visible */
-        .pr-chip { display:flex; gap:0; padding:8px 10px; background:var(--bg-card); border:1px solid var(--border); border-radius:6px; width:240px; height:72px; text-decoration:none; cursor:pointer; transition:background .1s,border-color .1s; overflow:hidden; }
-        .pr-chip:hover { background:var(--bg-card-hover); border-color:var(--border-strong); }
-        .pr-chip-body { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:space-between; }
-        .pr-chip-header { display:flex; align-items:center; gap:5px; }
-        .pr-chip-number { font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; color:var(--text-muted); flex-shrink:0; }
-        .pr-chip-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
-        .pr-chip-age { font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; flex-shrink:0; }
-        .pr-chip-header-right { display:flex; align-items:center; gap:5px; margin-left:auto; }
-        .pr-chip-title { font-size:11.5px; font-weight:500; color:var(--text-primary); line-height:1.35; overflow:hidden; display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; }
-        .pr-chip-meta { display:flex; align-items:center; gap:5px; }
-        .pr-chip-author { font-size:10px; color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px; }
-        .pr-chip-diff { font-family:'JetBrains Mono',monospace; font-size:9.5px; display:flex; gap:1px; }
-        .pr-chip-sep { font-size:10px; color:var(--text-muted); }
-        .pr-chip-status { font-size:9.5px; font-weight:600; white-space:nowrap; }
+        /* Skeleton */
+        .pr-card-skeleton { border-radius:7px; background:var(--bg-card); border:1px solid var(--border); animation:pulse 1.5s ease infinite; }
+
+        /* Card wrapper (for action buttons outside <a>) */
+        .pr-card-wrap { position:relative; }
+        .pr-card-wrap--starred .pr-card { border-left:3px solid var(--warning); }
+
+        .pr-card {
+          display:flex; flex-direction:column; justify-content:space-between;
+          padding:10px 12px; padding-right:36px; /* room for action buttons */
+          background:var(--bg-card); border:1px solid var(--border); border-radius:7px;
+          text-decoration:none; cursor:pointer; overflow:hidden;
+          transition:background .1s, border-color .1s;
+          box-sizing:border-box; width:100%;
+        }
+        .pr-card:hover { background:var(--bg-card-hover); border-color:var(--border-strong); }
+
+        /* Row 1: meta */
+        .pr-card-meta { display:flex; align-items:center; gap:5px; flex-shrink:0; }
+        .pr-card-number { font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; color:var(--text-muted); flex-shrink:0; }
+        .pr-card-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+        .pr-card-age { font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; flex-shrink:0; }
+        .pr-card-badges { display:flex; align-items:center; gap:4px; margin-left:auto; flex-shrink:0; }
+
+        /* Row 2: title */
+        .pr-card-title { font-size:12px; font-weight:600; color:var(--text-primary); line-height:1.35; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; flex-shrink:0; }
+
+        /* Row 3: description — flex:1 fills remaining space */
+        .pr-card-desc { flex:1; overflow:hidden; font-size:11px; line-height:1.5; color:var(--text-secondary); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; word-break:break-word; margin:3px 0; }
+        .pr-card-nodesc { color:var(--text-muted); font-style:italic; }
+
+        /* Row 4: footer */
+        .pr-card-footer { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+        .pr-card-author { font-size:10px; color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:90px; }
+        .pr-card-diff { font-family:'JetBrains Mono',monospace; font-size:9.5px; display:flex; gap:1px; }
+
+        /* Action buttons */
+        .pr-card-actions { position:absolute; top:6px; right:6px; display:flex; flex-direction:column; gap:2px; opacity:0; transition:opacity .1s; }
+        .pr-card-wrap:hover .pr-card-actions { opacity:1; }
+        .pr-card-star { background:transparent; border:none; cursor:pointer; font-size:13px; color:var(--text-muted); padding:1px 3px; border-radius:3px; line-height:1; transition:color .1s; }
+        .pr-card-star:hover,.pr-card-star--on { color:var(--warning); }
+        .pr-card-hide { background:transparent; border:none; cursor:pointer; font-size:14px; color:var(--text-muted); padding:0 3px; border-radius:3px; line-height:1; transition:color .1s; }
+        .pr-card-hide:hover { color:var(--danger); }
 
         /* Popover */
-        .popover { position:fixed; z-index:1000; background:var(--bg-card); border:1px solid var(--border-strong); border-radius:10px; padding:14px 16px; box-shadow:0 8px 32px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.04); pointer-events:auto; }
-        @media (prefers-color-scheme:light) { .popover { box-shadow:0 8px 32px rgba(0,0,0,.18); } }
+        .popover { position:fixed; z-index:1000; background:var(--bg-card); border:1px solid var(--border-strong); border-radius:10px; padding:14px 16px; box-shadow:0 8px 32px rgba(0,0,0,.5); pointer-events:auto; }
         .popover-header { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
         .popover-number { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:600; color:var(--text-muted); }
         .popover-state { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; padding:1px 6px; border-radius:3px; }
         .popover-label { font-size:10px; font-weight:600; padding:1px 6px; border-radius:3px; color:#000; }
-        .popover-title { font-size:13px; font-weight:500; color:var(--text-primary); line-height:1.45; margin-bottom:10px; word-break:break-word; }
+        .popover-title { font-size:13px; font-weight:600; color:var(--text-primary); line-height:1.45; margin-bottom:10px; }
         .popover-meta { display:flex; flex-direction:column; gap:3px; border-top:1px solid var(--border); padding-top:8px; margin-bottom:8px; }
         .popover-row { display:flex; justify-content:space-between; gap:12px; }
         .popover-row-label { font-size:11px; color:var(--text-muted); flex-shrink:0; }
         .popover-row-value { font-size:11px; color:var(--text-secondary); text-align:right; }
-        .popover-body { font-size:11px; color:var(--text-secondary); line-height:1.55; border-top:1px solid var(--border); padding-top:8px; white-space:pre-wrap; word-break:break-word; max-height:160px; overflow-y:auto; }
+        .popover-body { font-size:11px; color:var(--text-secondary); line-height:1.55; border-top:1px solid var(--border); padding-top:8px; white-space:pre-wrap; word-break:break-word; max-height:200px; overflow-y:auto; }
         .popover-hint { font-size:10px; color:var(--accent); margin-top:8px; }
 
-        /* Hidden section */
-        .hidden-section { margin-top:8px; }
-        .hidden-toggle { display:flex; align-items:center; justify-content:space-between; width:100%; background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:11px; font-family:inherit; padding:6px 0; gap:8px; }
+        /* Hidden drawer */
+        .hidden-drawer { margin-top:8px; border-top:1px solid var(--border); padding-top:8px; }
+        .hidden-toggle { display:flex; align-items:center; justify-content:space-between; width:100%; background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:11px; font-family:inherit; padding:4px 0; gap:8px; }
         .hidden-toggle:hover { color:var(--text-secondary); }
         .hidden-clear { font-size:10px; color:var(--accent); background:transparent; border:none; cursor:pointer; font-family:inherit; padding:0; margin-left:auto; }
         .hidden-clear:hover { text-decoration:underline; }
-        .hidden-chips { display:flex; flex-direction:column; gap:3px; margin-top:6px; border:1px solid var(--border); border-radius:6px; padding:8px; background:var(--bg-subtle); }
-        .hidden-chip { display:flex; align-items:center; gap:8px; padding:3px 0; }
-        .hidden-chip-num { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--text-muted); flex-shrink:0; width:52px; }
-        .hidden-chip-title { font-size:12px; color:var(--text-muted); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-style:italic; }
-        .hidden-chip-status { font-size:11px; flex-shrink:0; }
-        .hidden-chip-restore { background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:13px; padding:0 4px; flex-shrink:0; }
-        .hidden-chip-restore:hover { color:var(--success); }
+        .hidden-list { margin-top:6px; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+        .hidden-row { display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--border); }
+        .hidden-row:last-child { border-bottom:none; }
+        .hidden-num { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--text-muted); width:50px; flex-shrink:0; }
+        .hidden-title { font-size:12px; color:var(--text-secondary); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .hidden-star { background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:13px; padding:0 3px; }
+        .hidden-star:hover,.hidden-star--on { color:var(--warning); }
+        .hidden-restore { background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:13px; padding:0 4px; flex-shrink:0; }
+        .hidden-restore:hover { color:var(--success); }
       `}</style>
     </div>
   );

@@ -68,12 +68,19 @@ test("control - nav links work", async ({ page }) => {
   expect(page.url()).toContain("/control");
 });
 
-test("control - review queue loads and shows urgency colors", async ({ page }) => {
+test("control - review queue tab works and shows urgency section", async ({ page }) => {
   await page.goto("/control");
   await page.waitForSelector("header");
-  await page.waitForTimeout(5000); // wait for SWR data
+  await page.waitForTimeout(3000);
 
-  // "Needs your review" label should be present (case-insensitive)
+  // Switch to the Review Queue tab
+  const reviewTab = page.getByRole("tab", { name: /review queue/i });
+  await expect(reviewTab).toBeVisible();
+  await reviewTab.click();
+
+  await page.waitForTimeout(3000);
+
+  // "Needs your review" section should now be visible
   const reviewLabel = page.getByText(/needs your review/i);
   await expect(reviewLabel).toBeVisible();
 
