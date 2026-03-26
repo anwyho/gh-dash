@@ -21,6 +21,12 @@ export interface PrCardData {
   author: PrAuthor;
   labels: PrLabel[];
   updatedAt: string;
+  createdAt: string;
+}
+
+export interface ReviewRequestsResponse {
+  reviewRequests: PrCardData[];
+  lastFetchedAt: string;
 }
 
 export interface PrDetails {

@@ -10,6 +10,7 @@ interface GhSearchItem {
   user: { login: string; avatar_url: string };
   labels: { id: number; name: string; color: string }[];
   updated_at: string;
+  created_at: string;
   pull_request?: { merged_at: string | null };
 }
 
@@ -42,5 +43,6 @@ export function transformSearchItem(item: GhSearchItem): PrCardData {
       color: l.color,
     })),
     updatedAt: item.updated_at,
+    createdAt: item.created_at,
   };
 }

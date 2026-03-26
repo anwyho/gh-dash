@@ -1,13 +1,5 @@
-import { getConfig } from "@/lib/config";
-import Dashboard from "@/components/Dashboard";
+import { redirect } from "next/navigation";
 
 export default function Home() {
-  const config = getConfig();
-  return (
-    <Dashboard
-      refreshIntervalMs={config.refreshIntervalMs}
-      myLogin={config.myGitHubLogin}
-      repo={config.repo}
-    />
-  );
+  redirect("/control");
 }
